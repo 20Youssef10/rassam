@@ -5,6 +5,7 @@
  */
 const { spawnSync } = require("child_process");
 const path = require("path");
+const fs = require("fs");
 
 const root = path.resolve(__dirname, "..");
 
@@ -19,11 +20,16 @@ function run(cmd, args, cwd = root) {
 }
 
 console.log("Rassam local CI");
-run("npm", ["ci"]);
+const hasModules = fs.existsSync(path.join(root, "node_modules", "vite"));
+if (hasModules) {
+  console.log("node_modules present — skip npm ci (Windows EPERM on locked binaries)");
+} else {
+  run("npm", ["ci"]);
+}
 run("npm", ["run", "typecheck"]);
 run("npm", ["run", "build"]);
-run("node", ["--check", "storage/server.js"]);
-run("node", ["--check", "collab/server.js"]);
-run("npm", ["--prefix", "collab", "install"]);
-run("node", ["--check", "collab/server.js"]);
-console.log("\n✓ Local CI passed — ready to push / publish images");
+run("node", ["--check", path.join(root, "storage", "server.js")]);
+run("node", ["--check", path.join(root, "collab", "server.js")]);
+console.log("\n✓ Local CI passed");
+console.log("Next (manual GHCR): bash scripts/publish-ghcr.sh v0.1.0");
+console.log("Contributor cleanup: git push --force origin main && git push --force origin v0.1.0");
