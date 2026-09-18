@@ -1,0 +1,14 @@
+node_modules
+dist
+.DS_Store
+*.local
+.env
+.env.*
+!.env.example
+tsconfig.tsbuildinfo
+e2e/artifacts
+e2e/.logs
+storage/data
+*.log
+.idea
+.vscode

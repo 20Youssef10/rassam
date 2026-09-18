@@ -1,0 +1,30 @@
+{
+  "name": "@rassam/excalidraw",
+  "version": "0.1.0",
+  "description": "Embeddable Arabic-first Rassam whiteboard shell (from scratch)",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "keywords": [
+    "rassam",
+    "whiteboard",
+    "arabic",
+    "rtl",
+    "excalidraw-alternative"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/20Youssef10/rassam.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@rassam/room",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Rassam collaboration room server (E2E relay)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "socket.io": "4.7.2"
+  }
+}
