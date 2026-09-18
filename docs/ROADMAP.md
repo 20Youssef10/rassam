@@ -72,16 +72,19 @@
 ## Phase 4 — Launch & Beyond (Ongoing)
 
 **v1.0 Launch**
-- Public repository and documentation
-- Docker Hub / GHCR images
-- npm packages under `@rassam/*` scope (optional)
+- [x] Public repository — https://github.com/20Youssef10/rassam
+- [x] Documentation in-repo (`docs/`, README, PHASE5_LAUNCH)
+- [x] GHCR workflow (`.github/workflows/release-ghcr.yml`) — tag `v*`
+- [ ] Docker Hub images (optional)
+- [ ] npm `@rassam/*` publish (optional; skeleton ready)
+- [ ] Official announcement post
 
 **Post-v1 Ideas**
 - Deeper AI features (text-to-diagram in Arabic)
-- Presentation / slideshow mode
+- Presentation / slideshow mode polish
 - Voice / video hangouts (optional)
 - Team workspaces and permissions
-- Mobile-native shells (Capacitor / React Native)
+- Mobile-native shells
 - Official Arabic educational templates
 - Integration plugins (Obsidian, VS Code, Notion-style)
 
