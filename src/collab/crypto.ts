@@ -1,4 +1,7 @@
 /** End-to-end crypto for Rassam collab / share links (AES-GCM). */
+import { isEncryptedPayload, isValidRoomId, isValidRoomKey } from "../core/security";
+
+export { isEncryptedPayload };
 
 export function bytesToBase64Url(bytes: ArrayBuffer | Uint8Array): string {
   const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
@@ -39,6 +42,7 @@ export async function generateRoomKey(): Promise<string> {
 async function importAesKey(keyB64: string): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     "raw",
+    // Uint8Array is a valid BufferSource at runtime; the cast bridges DOM lib versions.
     base64UrlToBytes(keyB64) as unknown as BufferSource,
     { name: "AES-GCM" },
     false,
@@ -72,10 +76,17 @@ export async function decryptJSON<T>(
   payload: EncryptedPayload,
   keyB64: string,
 ): Promise<T> {
+  if (!isEncryptedPayload(payload)) {
+    throw new Error("invalid_payload_shape");
+  }
+  if (!isValidRoomKey(keyB64)) {
+    throw new Error("invalid_key");
+  }
   const key = await importAesKey(keyB64);
+  // Uint8Array is a valid BufferSource at runtime; the cast bridges DOM lib versions.
   const iv = base64UrlToBytes(payload.iv) as unknown as BufferSource;
-  const data = base64UrlToBytes(payload.c) as unknown as BufferSource;
-  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
+  const cipherBytes = base64UrlToBytes(payload.c) as unknown as BufferSource;
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, cipherBytes);
   return JSON.parse(new TextDecoder().decode(plain)) as T;
 }
 
@@ -103,15 +114,17 @@ export function parseCollabLink(hash: string): CollabLinkParts | null {
   const share = params.get("share");
   if (room) {
     const [roomId, roomKey] = room.split(",");
-    if (roomId && roomKey) {
+    if (roomId && roomKey && isValidRoomId(roomId) && isValidRoomKey(roomKey)) {
       return { roomId, roomKey, readOnly: false };
     }
+    return null;
   }
   if (share) {
     const parts = share.split(",");
-    if (parts[0] && parts[1]) {
+    if (parts[0] && parts[1] && isValidRoomId(parts[0]) && isValidRoomKey(parts[1])) {
       return { roomId: parts[0], roomKey: parts[1], readOnly: parts[2] === "ro" };
     }
+    return null;
   }
   return null;
 }

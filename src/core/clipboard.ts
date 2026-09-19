@@ -2,6 +2,7 @@ import { createId } from "./ids";
 import type { FilePayload, RassamElement } from "./types";
 import { ARABIC_FONT } from "./types";
 import { cloneElements } from "./geometry";
+import { isAllowedImageDataURL, sanitizeElementLink } from "./security";
 
 export type ClipboardPayload = {
   type: "rassam-clipboard";
@@ -25,7 +26,7 @@ export function writeClipboard(
   try {
     localStorage.setItem(CLIP_KEY, JSON.stringify(payload));
   } catch {
-    // ignore quota
+    // Clipboard persistence is best-effort (quota); the in-memory payload is returned.
   }
   return payload;
 }
@@ -42,6 +43,7 @@ export function readClipboard(): ClipboardPayload | null {
     }
     return parsed;
   } catch {
+    // Corrupt clipboard cache is not fatal — paste falls back to empty.
     return null;
   }
 }
@@ -86,9 +88,9 @@ export function bringForward(all: RassamElement[], ids: string[]): RassamElement
   const out = [...all];
   for (let i = out.length - 2; i >= 0; i--) {
     if (ids.includes(out[i].id) && !ids.includes(out[i + 1].id)) {
-      const tmp = out[i];
+      const swapped = out[i];
       out[i] = out[i + 1];
-      out[i + 1] = tmp;
+      out[i + 1] = swapped;
     }
   }
   return out;
@@ -98,9 +100,9 @@ export function sendBackward(all: RassamElement[], ids: string[]): RassamElement
   const out = [...all];
   for (let i = 1; i < out.length; i++) {
     if (ids.includes(out[i].id) && !ids.includes(out[i - 1].id)) {
-      const tmp = out[i];
+      const swapped = out[i];
       out[i] = out[i - 1];
-      out[i - 1] = tmp;
+      out[i - 1] = swapped;
     }
   }
   return out;
@@ -163,6 +165,20 @@ export type SceneJson = {
   files?: Record<string, FilePayload>;
   viewport?: { scrollX: number; scrollY: number; zoom: number };
 };
+
+/** Minimal runtime guard for untrusted element ingress (import/collab/clipboard). */
+function isRassamElementLike(raw: unknown): raw is RassamElement {
+  if (!raw || typeof raw !== "object") {
+    return false;
+  }
+  const el = raw as Record<string, unknown>;
+  return (
+    typeof el.id === "string" &&
+    typeof el.type === "string" &&
+    typeof el.x === "number" &&
+    typeof el.y === "number"
+  );
+}
 
 /** Map a subset of Excalidraw JSON elements into Rassam elements. */
 function fromExcalidrawEl(raw: Record<string, unknown>): RassamElement | null {
@@ -252,14 +268,14 @@ export function parseExcalidrawJson(raw: string): SceneJson | null {
         if (mapped) {
           elements.push(mapped);
         }
-      } else if (rawEl && typeof rawEl === "object" && "type" in rawEl && "id" in rawEl) {
-        elements.push(rawEl as unknown as RassamElement);
+      } else if (isRassamElementLike(rawEl)) {
+        elements.push(rawEl);
       }
     }
     return {
       type: looksExcalidraw ? "excalidraw" : "rassam-scene",
       version: 1,
-      elements,
+      elements: sanitizeSceneElements(elements),
       viewport:
         parsed.appState && typeof parsed.appState.scrollX === "number"
           ? {
@@ -270,8 +286,41 @@ export function parseExcalidrawJson(raw: string): SceneJson | null {
           : undefined,
     };
   } catch {
+    // Unparseable import payload — caller surfaces "invalid file".
     return null;
   }
+}
+
+function sanitizeSceneElements(elements: RassamElement[]): RassamElement[] {
+  return elements.slice(0, 5000).map((el) => {
+    if (!el || typeof el !== "object") return el;
+    const safe = { ...el } as RassamElement & { link?: string };
+    if (safe.link) {
+      safe.link = sanitizeElementLink(safe.link);
+      if (!safe.link) delete safe.link;
+    }
+    if (typeof safe.text === "string" && safe.text.length > 20000) {
+      (safe as { text: string }).text = safe.text.slice(0, 20000);
+    }
+    if (Array.isArray((safe as { points?: unknown }).points)) {
+      const pts = (safe as { points: { x: number; y: number }[] }).points;
+      if (pts.length > 5000) {
+        (safe as { points: unknown }).points = pts.slice(0, 5000);
+      }
+    }
+    return safe;
+  });
+}
+
+function sanitizeFiles(files: Record<string, FilePayload> | undefined): Record<string, FilePayload> | undefined {
+  if (!files || typeof files !== "object") return undefined;
+  const out: Record<string, FilePayload> = {};
+  for (const [k, v] of Object.entries(files).slice(0, 200)) {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(k)) continue;
+    if (!v || typeof v.dataURL !== "string" || !isAllowedImageDataURL(v.dataURL)) continue;
+    out[k] = v;
+  }
+  return out;
 }
 
 export function parseSceneJson(raw: string): SceneJson | null {
@@ -293,11 +342,12 @@ export function parseSceneJson(raw: string): SceneJson | null {
     return {
       type: "rassam-scene",
       version: 1,
-      elements: parsed.elements,
-      files: parsed.files,
+      elements: sanitizeSceneElements(parsed.elements),
+      files: sanitizeFiles(parsed.files),
       viewport: parsed.viewport,
     };
   } catch {
+    // Not Rassam JSON — fall through to the Excalidraw parser.
     return parseExcalidrawJson(raw);
   }
 }

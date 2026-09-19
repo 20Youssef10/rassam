@@ -1,0 +1,20 @@
+{
+  "JOIN": "join-room",
+  "INIT": "init-room",
+  "NEW_USER": "new-user",
+  "USERS": "room-user-change",
+  "SCENE": "scene-broadcast",
+  "CURSOR": "cursor-broadcast",
+  "CLIENT_SCENE": "client-scene",
+  "CLIENT_CURSOR": "client-cursor",
+  "CLIENT_VIEWPORT": "client-viewport",
+  "VIEWPORT": "viewport-broadcast",
+  "CLIENT_PRESENCE": "client-presence",
+  "PRESENCE": "presence-broadcast",
+  "CLIENT_FOLLOW": "client-follow",
+  "FOLLOW": "follow-broadcast",
+  "CLIENT_CHAT": "client-chat",
+  "CHAT": "chat-broadcast",
+  "CLIENT_CRDT": "client-crdt",
+  "CRDT": "crdt-broadcast"
+}

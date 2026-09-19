@@ -17,27 +17,18 @@ import {
 } from "./events";
 
 import { mergeOps, opsFromState, type CrdtOp, type CrdtState } from "../core/crdt";
+import { isValidRoomId } from "../core/security";
+import wsEventsJson from "./ws-events.json";
 
-export const WS_EVENTS = {
-  JOIN: "join-room",
-  INIT: "init-room",
-  NEW_USER: "new-user",
-  USERS: "room-user-change",
-  SCENE: "scene-broadcast",
-  CURSOR: "cursor-broadcast",
-  CLIENT_SCENE: "client-scene",
-  CLIENT_CURSOR: "client-cursor",
-  CLIENT_VIEWPORT: "client-viewport",
-  VIEWPORT: "viewport-broadcast",
-  CLIENT_PRESENCE: "client-presence",
-  PRESENCE: "presence-broadcast",
-  CLIENT_FOLLOW: "client-follow",
-  FOLLOW: "follow-broadcast",
-  CLIENT_CHAT: "client-chat",
-  CHAT: "chat-broadcast",
-  CLIENT_CRDT: "client-crdt",
-  CRDT: "crdt-broadcast",
-} as const;
+// Single source of truth shared with collab/server.js (which requires
+// ../src/collab/ws-events.json). Keep values in the JSON in sync.
+export const WS_EVENTS: Record<
+  | "JOIN" | "INIT" | "NEW_USER" | "USERS" | "SCENE" | "CURSOR"
+  | "CLIENT_SCENE" | "CLIENT_CURSOR" | "CLIENT_VIEWPORT" | "VIEWPORT"
+  | "CLIENT_PRESENCE" | "PRESENCE" | "CLIENT_FOLLOW" | "FOLLOW"
+  | "CLIENT_CHAT" | "CHAT" | "CLIENT_CRDT" | "CRDT",
+  string
+> = wsEventsJson;
 
 export type SceneBroadcast = {
   elements: RassamElement[];
@@ -114,7 +105,45 @@ export class CollabClient {
   }
 
   setUserName(name: string) {
-    this.userName = name || this.userName;
+    const clean = String(name || "").trim().slice(0, 64);
+    this.userName = clean || this.userName;
+  }
+
+  getRoomId(): string | null {
+    return this.roomId;
+  }
+
+  private onEncrypted<T>(
+    event: string,
+    handleMessage: (message: T) => void,
+    options?: { requireCrdt?: boolean },
+  ): void {
+    this.socket?.on(event, async (payload: EncryptedPayload) => {
+      if (!this.roomKey || !payload) {
+        return;
+      }
+      if (options?.requireCrdt && !this.crdt) {
+        return;
+      }
+      try {
+        const message = await decryptJSON<T>(payload, this.roomKey);
+        handleMessage(message);
+      } catch (error) {
+        console.warn(`Rassam collab: ignoring malformed ${event}`, error);
+      }
+    });
+  }
+
+  private handleUsers(raw: unknown): void {
+    const list = (Array.isArray(raw) ? raw : []).map((entry) => {
+      if (typeof entry === "string") {
+        return { id: entry } as CollabUser;
+      }
+      return entry as CollabUser;
+    });
+    this.users = list;
+    this.callbacks.onUsers(list);
+    emitCollabUsers(list);
   }
 
   async connect(options: {
@@ -125,6 +154,9 @@ export class CollabClient {
     userId?: string;
     userName?: string;
   }) {
+    if (!isValidRoomId(options.roomId)) {
+      throw new Error("invalid_room_id");
+    }
     this.disconnect();
     this.roomId = options.roomId;
     this.roomKey = options.roomKey;
@@ -143,7 +175,7 @@ export class CollabClient {
     });
 
     this.socket.on("connect", () => {
-      this.socket?.emit(WS_EVENTS.JOIN, this.roomId, this.userId, this.userName);
+      this.socket?.emit(WS_EVENTS.JOIN, this.roomId, this.userId, this.userName, this.readOnly);
       this.callbacks.onStatus(this.readOnly ? "read-only" : "connected");
     });
 
@@ -151,17 +183,7 @@ export class CollabClient {
       this.callbacks.onStatus("error", err.message);
     });
 
-    this.socket.on(WS_EVENTS.USERS, (raw: unknown) => {
-      const list = (Array.isArray(raw) ? raw : []).map((u) => {
-        if (typeof u === "string") {
-          return { id: u } as CollabUser;
-        }
-        return u as CollabUser;
-      });
-      this.users = list;
-      this.callbacks.onUsers(list);
-      emitCollabUsers(list);
-    });
+    this.socket.on(WS_EVENTS.USERS, (raw: unknown) => this.handleUsers(raw));
 
     this.socket.on(WS_EVENTS.SCENE, async (payload: EncryptedPayload) => {
       if (!this.roomKey) {
@@ -178,118 +200,74 @@ export class CollabClient {
       }
     });
 
-    this.socket.on(WS_EVENTS.CURSOR, async (payload: EncryptedPayload) => {
-      if (!this.roomKey) {
-        return;
-      }
-      try {
-        const data = await decryptJSON<{
-          userId: string;
-          x: number;
-          y: number;
-          name?: string;
-        }>(payload, this.roomKey);
-        if (data.userId !== this.userId) {
-          emitRemoteCursor(data);
-          this.callbacks.onCursor(data);
+    this.onEncrypted<{ userId: string; x: number; y: number; name?: string }>(
+      WS_EVENTS.CURSOR,
+      (cursorMsg) => {
+        if (cursorMsg.userId !== this.userId) {
+          emitRemoteCursor(cursorMsg);
+          this.callbacks.onCursor(cursorMsg);
         }
-      } catch {
-        // ignore
-      }
-    });
+      },
+    );
 
-    this.socket.on(WS_EVENTS.VIEWPORT, async (payload: EncryptedPayload) => {
-      if (!this.roomKey) {
-        return;
-      }
-      try {
-        const data = await decryptJSON<{
-          userId: string;
-          scrollX: number;
-          scrollY: number;
-          zoom: number;
-        }>(payload, this.roomKey);
-        if (data.userId !== this.userId) {
-          emitRemoteViewport(data);
-          this.callbacks.onViewport?.(data);
+    this.onEncrypted<{ userId: string; scrollX: number; scrollY: number; zoom: number }>(
+      WS_EVENTS.VIEWPORT,
+      (viewportMsg) => {
+        if (viewportMsg.userId !== this.userId) {
+          emitRemoteViewport(viewportMsg);
+          this.callbacks.onViewport?.(viewportMsg);
         }
-      } catch {
-        // ignore
-      }
-    });
+      },
+    );
 
-    this.socket.on(WS_EVENTS.PRESENCE, async (payload: EncryptedPayload) => {
-      if (!this.roomKey || !payload || typeof payload !== "object") {
-        return;
-      }
-      try {
-        const data = await decryptJSON<{
-          userId: string;
-          status: "active" | "idle";
-          name?: string;
-        }>(payload, this.roomKey);
-        if (data.userId !== this.userId) {
-          emitPresence(data);
+    this.onEncrypted<{ userId: string; status: "active" | "idle"; name?: string }>(
+      WS_EVENTS.PRESENCE,
+      (presenceMsg) => {
+        if (presenceMsg.userId !== this.userId) {
+          emitPresence(presenceMsg);
           this.users = this.users.map((u) =>
-            u.id === data.userId
-              ? { ...u, status: data.status, name: data.name || u.name }
+            u.id === presenceMsg.userId
+              ? { ...u, status: presenceMsg.status, name: presenceMsg.name || u.name }
               : u,
           );
           this.callbacks.onUsers(this.users);
         }
-      } catch {
-        // plain-text presence may still update roster on server side
-      }
-    });
+      },
+    );
 
-    this.socket.on(WS_EVENTS.FOLLOW, async (payload: EncryptedPayload) => {
-      if (!this.roomKey || !payload) {
-        return;
-      }
-      try {
-        const data = await decryptJSON<{
-          userId: string;
-          targetId: string | null;
-        }>(payload, this.roomKey);
-        if (data.userId !== this.userId) {
-          emitFollow(data);
+    this.onEncrypted<{ userId: string; targetId: string | null }>(
+      WS_EVENTS.FOLLOW,
+      (followMsg) => {
+        if (followMsg.userId !== this.userId) {
+          emitFollow(followMsg);
         }
-      } catch {
-        // ignore
-      }
-    });
+      },
+    );
 
-    this.socket.on(WS_EVENTS.CHAT, async (payload: EncryptedPayload) => {
-      if (!this.roomKey || !payload) {
-        return;
-      }
-      try {
-        const data = await decryptJSON<{
-          userId: string;
-          name?: string;
-          text: string;
-          ts: number;
-        }>(payload, this.roomKey);
-        if (data.userId !== this.userId) {
-          emitChat(data);
+    this.onEncrypted<{ userId: string; name?: string; text: string; ts: number }>(
+      WS_EVENTS.CHAT,
+      (chatMsg) => {
+        if (chatMsg.userId !== this.userId) {
+          emitChat(chatMsg);
         }
-      } catch {
-        // ignore
-      }
-    });
+      },
+    );
 
-    this.socket.on(WS_EVENTS.CRDT, async (payload: EncryptedPayload) => {
-      if (!this.roomKey || !payload || !this.crdt) {
-        return;
-      }
-      try {
-        const ops = await decryptJSON<CrdtOp[]>(payload, this.roomKey);
-        this.crdt = mergeOps(this.crdt, ops);
-        this.onCrdtMerged?.(opsFromState(this.crdt).filter((o) => o.type === "upsert").map((o) => (o as { el: unknown }).el));
-      } catch {
-        // ignore malformed crdt packets
-      }
-    });
+    this.onEncrypted<CrdtOp[]>(
+      WS_EVENTS.CRDT,
+      (crdtOps) => {
+        if (!this.crdt) {
+          return;
+        }
+        this.crdt = mergeOps(this.crdt, crdtOps);
+        this.onCrdtMerged?.(
+          opsFromState(this.crdt)
+            .filter((o) => o.type === "upsert")
+            .map((o) => (o as { el: unknown }).el),
+        );
+      },
+      { requireCrdt: true },
+    );
 
     return this;
   }
@@ -388,7 +366,7 @@ export class CollabClient {
   }
 
   async broadcastChat(text: string) {
-    if (!this.socket || !this.roomId || !this.roomKey || !text.trim()) {
+    if (!this.socket || !this.roomId || !this.roomKey || !text.trim() || this.readOnly) {
       return;
     }
     const encrypted = await encryptJSON(

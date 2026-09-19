@@ -1,4 +1,5 @@
 import type { FilePayload, Scene } from "./types";
+import { MAX_IMAGE_BYTES, isAllowedImageDataURL, isAllowedImageMime } from "./security";
 
 const STORAGE_KEY = "rassam-scene-v1";
 
@@ -19,6 +20,7 @@ export function loadScene(): Scene | null {
       files: parsed.files ?? {},
     };
   } catch {
+    // Corrupt scene cache is not fatal — start with a blank canvas.
     return null;
   }
 }
@@ -42,11 +44,22 @@ export function clearScene(): void {
 }
 
 export function readFileAsDataURL(file: File): Promise<FilePayload> {
+  if (!isAllowedImageMime(file.type || "image/png")) {
+    return Promise.reject(new Error("unsupported_image_type"));
+  }
+  if (file.size > MAX_IMAGE_BYTES) {
+    return Promise.reject(new Error("image_too_large"));
+  }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
+      const dataURL = String(reader.result);
+      if (!isAllowedImageDataURL(dataURL)) {
+        reject(new Error("unsupported_image_type"));
+        return;
+      }
       resolve({
-        dataURL: String(reader.result),
+        dataURL,
         mimeType: file.type || "image/png",
       });
     };

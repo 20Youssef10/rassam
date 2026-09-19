@@ -128,8 +128,8 @@ export async function ensureFontsReady(
       }),
     );
     await document.fonts.ready;
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("Rassam: font preload failed, using fallback fonts", error);
   }
 }
 

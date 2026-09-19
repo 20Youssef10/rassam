@@ -175,6 +175,7 @@ export function deserializeCrdt(raw: string, fallbackActor: string): CrdtState |
       actor: p.actor || fallbackActor,
     };
   } catch {
+    // Malformed CRDT payload — caller treats null as unusable.
     return null;
   }
 }

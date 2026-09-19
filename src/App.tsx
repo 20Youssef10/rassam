@@ -43,7 +43,6 @@ import {
   getPluginCommands,
   registerBuiltinPlugins,
 } from "./plugins/registry";
-import { mergeOps, opsFromDiff, createCrdt, type CrdtState } from "./core/crdt";
 import type { AlignMode } from "./core/align";
 import type { LibraryItem } from "./library/arabicShapes";
 import {
@@ -126,6 +125,7 @@ export default function App() {
 
   useEffect(() => {
     if ("serviceWorker" in navigator) {
+      // Offline cache is best-effort; a failed registration must not break the app.
       navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     }
   }, []);
@@ -148,8 +148,6 @@ export default function App() {
 
   useEffect(() => {
     registerBuiltinPlugins();
-    const actor = `u_${Math.random().toString(36).slice(2, 8)}`;
-    let crdt: CrdtState = createCrdt(actor);
     void activatePlugins({
       locale,
       insertElements: (els) => apiRef.current?.insertElements(els),
@@ -157,11 +155,6 @@ export default function App() {
       setLiveMessage,
       registerCommand: () => undefined,
     });
-    return () => {
-      void crdt;
-      void opsFromDiff;
-      void mergeOps;
-    };
   }, [locale]);
 
   useEffect(() => {
@@ -340,11 +333,23 @@ export default function App() {
         void syncRoomLibrary(parts.roomId);
         const remote = await loadRoomScene(parts.roomId).catch(() => null);
         if (remote && apiRef.current) {
-          const scene = await decryptJSON<{
-            elements: RassamElement[];
-            files?: Record<string, FilePayload>;
-          }>(remote, parts.roomKey);
-          apiRef.current.setRemoteScene(scene.elements, scene.files);
+          try {
+            const scene = await decryptJSON<{
+              elements: RassamElement[];
+              files?: Record<string, FilePayload>;
+            }>(remote, parts.roomKey);
+            if (scene && Array.isArray(scene.elements)) {
+              apiRef.current.setRemoteScene(
+                scene.elements.slice(0, 5000),
+                scene.files,
+              );
+            }
+          } catch {
+            setCollabStatus(parts.readOnly ? "read-only" : "connected");
+            setLiveMessage(
+              locale === "ar" ? "مفتاح الغرفة غير صحيح أو اللقطة تالفة" : "Wrong room key or corrupt snapshot",
+            );
+          }
         }
       })
       .catch(() => setCollabStatus("error"));
@@ -357,11 +362,10 @@ export default function App() {
     if (!client || !key || !api || client.isReadOnly) {
       return;
     }
-    const roomId = (client as unknown as { roomId?: string } | null);
-    // use link hash room id
+    // Prefer the live client room id; fall back to the URL hash link.
     const parts = parseCollabLink(window.location.hash) ??
       (collabLink ? parseCollabLink(new URL(collabLink).hash) : null);
-    const id = parts?.roomId;
+    const id = client.getRoomId() ?? parts?.roomId;
     if (!id) {
       return;
     }
@@ -369,8 +373,9 @@ export default function App() {
       { elements: api.getElements(), files: api.getFiles(), ts: Date.now() },
       key,
     );
-    await saveRoomScene(id, payload).catch(() => undefined);
-    void roomId;
+    await saveRoomScene(id, payload).catch((error) => {
+      console.warn("Rassam: room snapshot save failed", error);
+    });
   }, [collabLink]);
 
   const startCollab = useCallback(
@@ -403,7 +408,9 @@ export default function App() {
           },
           roomKey,
         );
-        await saveRoomScene(id, payload).catch(() => undefined);
+        await saveRoomScene(id, payload).catch((error) => {
+          console.warn("Rassam: initial room snapshot save failed", error);
+        });
         void client.broadcastScene(
           apiRef.current.getElements(),
           apiRef.current.getFiles(),
@@ -436,7 +443,7 @@ export default function App() {
     if (next == null || !next.trim()) {
       return;
     }
-    const name = next.trim();
+    const name = next.trim().slice(0, 64);
     setUserName(name);
     localStorage.setItem("rassam-username", name);
     collabRef.current?.setUserName(name);
@@ -772,12 +779,15 @@ export default function App() {
           if (!api) {
             return;
           }
+          if (!record || !Array.isArray(record.template)) {
+            return;
+          }
           const vp = viewport;
           const origin = {
             x: -vp.scrollX + 80 / vp.zoom,
             y: -vp.scrollY + 80 / vp.zoom,
           };
-          const els = (record.template as RassamElement[]).map((el) => ({
+          const els = (record.template as RassamElement[]).slice(0, 500).map((el) => ({
             ...el,
             id: `${el.id}_${Math.random().toString(36).slice(2, 6)}`,
             x: el.x + origin.x,

@@ -3,6 +3,60 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ARABIC_LIBRARY, type LibraryItem } from "../library/arabicShapes";
 import type { LibraryRecord } from "../library/libraryStore";
 import type { Messages } from "../i18n/ar";
+import { isAllowedLibraryUrl } from "../core/security";
+
+function isLibraryRecordLike(item: unknown): item is LibraryRecord {
+  if (!item || typeof item !== "object") {
+    return false;
+  }
+  const rec = item as Record<string, unknown>;
+  return (
+    typeof rec.id === "string" &&
+    Array.isArray(rec.template) &&
+    rec.template.length < 500
+  );
+}
+
+function toLibraryRecords(data: unknown): LibraryRecord[] {
+  const arr = Array.isArray(data)
+    ? data.slice(0, 100)
+    : Array.isArray((data as { items?: unknown })?.items)
+      ? ((data as { items: unknown[] }).items).slice(0, 100)
+      : [];
+  return arr.map((entry: unknown, i: number) => {
+    const item = entry as Record<string, unknown>;
+    if (isLibraryRecordLike(item)) {
+      return {
+        id: String(item.id).slice(0, 64),
+        titleAr: String(item.titleAr || item.titleEn || `عنصر ${i + 1}`).slice(0, 128),
+        titleEn: String(item.titleEn || item.titleAr || `Item ${i + 1}`).slice(0, 128),
+        category: "custom",
+        template: (item.template as unknown[]).slice(0, 200),
+      };
+    }
+    return {
+      id: `remote_${Date.now().toString(36)}_${i}`,
+      titleAr: String(item?.label || item?.title || `عنصر ${i + 1}`).slice(0, 128),
+      titleEn: String(item?.label || item?.title || `Item ${i + 1}`).slice(0, 128),
+      category: "custom",
+      template: [item],
+    };
+  });
+}
+
+async function fetchRemoteLibrary(url: string): Promise<unknown> {
+  const ctrl = new AbortController();
+  const t = window.setTimeout(() => ctrl.abort(), 15000);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return await res.json();
+  } finally {
+    window.clearTimeout(t);
+  }
+}
 
 const CATEGORIES = ["all", "calligraphy", "flow", "office", "education", "custom"] as const;
 
@@ -122,30 +176,14 @@ export function LibraryPanel({
               if (!url) {
                 return;
               }
+              if (!isAllowedLibraryUrl(url)) {
+                window.alert(locale === "ar" ? "رابط غير مسموح (https فقط)" : "URL not allowed (https only, http localhost)");
+                return;
+              }
               try {
-                const res = await fetch(url);
-                const data = await res.json();
-                const arr = Array.isArray(data)
-                  ? data
-                  : Array.isArray(data?.items)
-                    ? data.items
-                    : [];
-                const records: LibraryRecord[] = arr.map(
-                  (item: Record<string, unknown>, i: number) => {
-                    if (item && typeof item === "object" && "template" in item) {
-                      return item as unknown as LibraryRecord;
-                    }
-                    return {
-                      id: `remote_${Date.now().toString(36)}_${i}`,
-                      titleAr: String(item?.label || item?.title || `عنصر ${i + 1}`),
-                      titleEn: String(item?.label || item?.title || `Item ${i + 1}`),
-                      category: "custom",
-                      template: [item],
-                    };
-                  },
-                );
-                onLoadRemote(records);
-              } catch {
+                onLoadRemote(toLibraryRecords(await fetchRemoteLibrary(url)));
+              } catch (error) {
+                console.warn("Rassam: remote library load failed", error);
                 window.alert(locale === "ar" ? "تعذر تحميل الرابط" : "Failed to load URL");
               }
             }}

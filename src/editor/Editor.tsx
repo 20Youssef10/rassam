@@ -86,6 +86,7 @@ import { StatsPanel } from "../ui/StatsPanel";
 import { Minimap } from "../ui/Minimap";
 import { onRemoteCursor } from "../collab/events";
 import { finalizeFreehand } from "../core/smooth";
+import { isSafeUrl, sanitizeElementLink } from "../core/security";
 import { snapToObjects, type SnapGuide } from "../core/snapGuides";
 import {
   loadImageSize,
@@ -405,10 +406,8 @@ export function Editor(props: EditorProps) {
   lasersRef.current = lasers;
   const [statsOpen, setStatsOpen] = useState(false);
   const [showMinimap, setShowMinimap] = useState(true);
-  const [elbowMode, setElbowMode] = useState(false);
-  const elbowModeRef = useRef(elbowMode);
-  elbowModeRef.current = elbowMode || tool === "elbow";
-  void setElbowMode;
+  const elbowModeRef = useRef(false);
+  elbowModeRef.current = tool === "elbow";
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
   const guidesRef = useRef(snapGuides);
   guidesRef.current = snapGuides;
@@ -603,8 +602,8 @@ export function Editor(props: EditorProps) {
         }
         try {
           await copyCanvasToClipboard(canvas);
-        } catch {
-          // ignore
+        } catch (error) {
+          console.warn("Rassam: copy PNG to clipboard failed", error);
         }
       },
       exportSvg: (selectedOnly) => {
@@ -953,17 +952,21 @@ export function Editor(props: EditorProps) {
         if (readOnlyRef.current) {
           return;
         }
+        const safe = sanitizeElementLink(link);
+        if (link && !safe) {
+          return;
+        }
         setHistory((h) =>
           pushHistory(
             h,
-            h.present.map((el) => (el.id === id ? { ...el, link } : el)),
+            h.present.map((el) => (el.id === id ? { ...el, link: safe } : el)),
           ),
         );
         window.setTimeout(broadcastScene, 0);
       },
       openElementLink: (id) => {
         const el = elementsRef.current.find((e) => e.id === id);
-        if (el?.link) {
+        if (el?.link && isSafeUrl(el.link)) {
           window.open(el.link, "_blank", "noopener,noreferrer");
         }
       },
@@ -1142,6 +1145,10 @@ export function Editor(props: EditorProps) {
       if (readOnlyRef.current) {
         return;
       }
+      const { isAllowedImageDataURL } = await import("../core/security");
+      if (!isAllowedImageDataURL(payload.dataURL)) {
+        return;
+      }
       const fileId = createId("file");
       let width = 240;
       let height = 180;
@@ -1151,7 +1158,7 @@ export function Editor(props: EditorProps) {
         width = Math.max(48, size.width * scale);
         height = Math.max(48, size.height * scale);
       } catch {
-        // defaults
+        // keep default dimensions when the image cannot be measured
       }
       const el: RassamElement = {
         id: createId(),
@@ -1504,17 +1511,21 @@ export function Editor(props: EditorProps) {
             continue;
           }
           e.preventDefault();
-          const payload = await readFileAsDataURL(file);
-          const vp = viewportRef.current;
-          const canvas = canvasRef.current;
-          const rect = canvas?.getBoundingClientRect();
-          const cx = rect ? rect.width / 2 : 400;
-          const cy = rect ? rect.height / 2 : 300;
-          const pt = {
-            x: cx / vp.zoom - vp.scrollX - 120,
-            y: cy / vp.zoom - vp.scrollY - 90,
-          };
-          await placeImageAt(pt, payload);
+          try {
+            const payload = await readFileAsDataURL(file);
+            const vp = viewportRef.current;
+            const canvas = canvasRef.current;
+            const rect = canvas?.getBoundingClientRect();
+            const cx = rect ? rect.width / 2 : 400;
+            const cy = rect ? rect.height / 2 : 300;
+            const pt = {
+              x: cx / vp.zoom - vp.scrollX - 120,
+              y: cy / vp.zoom - vp.scrollY - 90,
+            };
+            await placeImageAt(pt, payload);
+          } catch {
+            // unsupported type/size — ignore paste
+          }
           break;
         }
       }
@@ -1634,10 +1645,71 @@ export function Editor(props: EditorProps) {
     if (!file || readOnlyRef.current) {
       return;
     }
-    const payload = await readFileAsDataURL(file);
-    pendingImageRef.current = payload;
-    setPendingImage(true);
-    onToolChange?.("image");
+    try {
+      const payload = await readFileAsDataURL(file);
+      pendingImageRef.current = payload;
+      setPendingImage(true);
+      onToolChange?.("image");
+    } catch (error) {
+      console.warn("Rassam: ignoring unsupported image file", error);
+      return;
+    }
+  };
+
+  const beginLinearPointDrag = (pt: { x: number; y: number }): boolean => {
+    const linId = editingLinearRef.current;
+    if (!linId || readOnlyRef.current) {
+      return false;
+    }
+    const lin = elementsRef.current.find(
+      (el) => el.id === linId && (el.type === "line" || el.type === "arrow"),
+    );
+    if (!lin || (lin.type !== "line" && lin.type !== "arrow")) {
+      return false;
+    }
+    const zoom = viewportRef.current.zoom;
+    const hitIdx = lin.points.findIndex(
+      (p) => Math.hypot(p.x - pt.x, p.y - pt.y) < 10 / zoom,
+    );
+    if (hitIdx < 0) {
+      return false;
+    }
+    dragRef.current = {
+      kind: "point",
+      id: lin.id,
+      index: hitIdx,
+      snapshot: cloneElements(elementsRef.current),
+    };
+    return true;
+  };
+
+  const beginResizeDrag = (pt: { x: number; y: number }): boolean => {
+    if (selectedIdsRef.current.length !== 1 || readOnlyRef.current) {
+      return false;
+    }
+    const selected = elementsRef.current.find(
+      (el) => el.id === selectedIdsRef.current[0],
+    );
+    if (!selected) {
+      return false;
+    }
+    const resizeHandle = hitResizeHandle(
+      pt,
+      elementBounds(selected),
+      viewportRef.current.zoom,
+    );
+    if (!resizeHandle) {
+      return false;
+    }
+    dragRef.current = {
+      kind: "resize",
+      id: selected.id,
+      handle: resizeHandle,
+      originBounds: elementBounds(selected),
+      originElement: cloneElements([selected])[0],
+      snapshot: cloneElements(elementsRef.current),
+    };
+    return true;
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -1735,51 +1807,13 @@ export function Editor(props: EditorProps) {
 
     if (currentTool === "select") {
       // linear point editing
-      const linId = editingLinearRef.current;
-      if (linId && !readOnlyRef.current) {
-        const lin = elementsRef.current.find(
-          (el) => el.id === linId && (el.type === "line" || el.type === "arrow"),
-        );
-        if (lin && (lin.type === "line" || lin.type === "arrow")) {
-          const zoom = viewportRef.current.zoom;
-          const hitIdx = lin.points.findIndex(
-            (p) => Math.hypot(p.x - pt.x, p.y - pt.y) < 10 / zoom,
-          );
-          if (hitIdx >= 0) {
-            dragRef.current = {
-              kind: "point",
-              id: lin.id,
-              index: hitIdx,
-              snapshot: cloneElements(elementsRef.current),
-            };
-            return;
-          }
-        }
+      if (beginLinearPointDrag(pt)) {
+        return;
       }
 
       // resize handle on single selection
-      if (selectedIdsRef.current.length === 1 && !readOnlyRef.current) {
-        const selected = elementsRef.current.find(
-          (el) => el.id === selectedIdsRef.current[0],
-        );
-        if (selected) {
-          const handle = hitResizeHandle(
-            pt,
-            elementBounds(selected),
-            viewportRef.current.zoom,
-          );
-          if (handle) {
-            dragRef.current = {
-              kind: "resize",
-              id: selected.id,
-              handle,
-              originBounds: elementBounds(selected),
-              originElement: cloneElements([selected])[0],
-              snapshot: cloneElements(elementsRef.current),
-            };
-            return;
-          }
-        }
+      if (beginResizeDrag(pt)) {
+        return;
       }
 
       const hit = hitTestElements(elementsRef.current, pt, 6);
@@ -1907,28 +1941,50 @@ export function Editor(props: EditorProps) {
     paint();
   };
 
+  const broadcastCursorThrottled = (x: number, y: number) => {
+    if (!collabRef?.current?.connected || collabRef.current.isReadOnly) {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastCursorSentRef.current >= 50) {
+      lastCursorSentRef.current = now;
+      void collabRef.current.broadcastCursor(x, y);
+    }
+  };
+
+  const updateHoverHandle = (pt: { x: number; y: number }) => {
+    const selected = elementsRef.current.find((el) => el.id === selectedIds[0]);
+    if (!selected || readOnlyRef.current) {
+      return;
+    }
+    setHoverHandle(
+      hitResizeHandle(pt, elementBounds(selected), viewportRef.current.zoom),
+    );
+  };
+
+  const commitDragHistory = (
+    snapshot: RassamElement[],
+    changedIds: string[],
+    refresh: boolean,
+  ) => {
+    setHistory((h) => ({
+      past: [
+        ...h.past,
+        { elements: snapshot, changedIds, ts: Date.now(), source: "local" as const },
+      ].slice(-80),
+      present: refresh ? refreshBindings(h.present, new Set(changedIds)) : h.present,
+      future: [],
+    }));
+  };
+
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current;
     const pt = toScene(e.clientX, e.clientY);
 
-    if (collabRef?.current?.connected && !collabRef.current.isReadOnly) {
-      const now = Date.now();
-      if (now - lastCursorSentRef.current >= 50) {
-        lastCursorSentRef.current = now;
-        void collabRef.current.broadcastCursor(pt.x, pt.y);
-      }
-    }
+    broadcastCursorThrottled(pt.x, pt.y);
 
     if (drag.kind === "none" && toolRef.current === "select" && selectedIds.length === 1) {
-      const selected = elementsRef.current.find((el) => el.id === selectedIds[0]);
-      if (selected && !readOnlyRef.current) {
-        const handle = hitResizeHandle(
-          pt,
-          elementBounds(selected),
-          viewportRef.current.zoom,
-        );
-        setHoverHandle(handle);
-      }
+      updateHoverHandle(pt);
       return;
     }
 
@@ -2109,19 +2165,7 @@ export function Editor(props: EditorProps) {
     }
 
     if (drag.kind === "point") {
-      setHistory((h) => ({
-        past: [
-          ...h.past,
-          {
-            elements: drag.snapshot,
-            changedIds: [drag.id],
-            ts: Date.now(),
-            source: "local" as const,
-          },
-        ].slice(-80),
-        present: refreshBindings(h.present, new Set([drag.id])),
-        future: [],
-      }));
+      commitDragHistory(drag.snapshot, [drag.id], true);
       broadcastScene();
       paint();
       return;
@@ -2153,22 +2197,7 @@ export function Editor(props: EditorProps) {
           ? [...new Set([drag.id, ...selectedIdsRef.current])]
           : [drag.id];
       setSnapGuides([]);
-      setHistory((h) => ({
-        past: [
-          ...h.past,
-          {
-            elements: drag.snapshot,
-            changedIds,
-            ts: Date.now(),
-            source: "local" as const,
-          },
-        ].slice(-80),
-        present:
-          drag.kind === "move"
-            ? refreshBindings(h.present, new Set(changedIds))
-            : h.present,
-        future: [],
-      }));
+      commitDragHistory(drag.snapshot, changedIds, drag.kind === "move");
       broadcastScene();
       paint();
       return;
@@ -2380,7 +2409,7 @@ export function Editor(props: EditorProps) {
           }
           const pt = toScene(e.clientX, e.clientY);
           const hit = hitTestElements(elementsRef.current, pt, 8);
-          if (hit?.link) {
+          if (hit?.link && isSafeUrl(hit.link)) {
             e.preventDefault();
             window.open(hit.link, "_blank", "noopener,noreferrer");
           }

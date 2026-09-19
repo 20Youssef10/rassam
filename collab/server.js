@@ -3,30 +3,46 @@
  */
 const http = require("http");
 const { Server } = require("socket.io");
+// Single source of truth: src/collab/ws-events.json (mirrored here for Node).
+const WS_EVENTS = require("../src/collab/ws-events.json");
 
 const PORT = Number(process.env.ROOM_PORT || process.env.PORT || 3002);
-const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "";
+const ALLOWED_ORIGINS = CORS_ORIGIN.split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .filter((s) => s !== "*");
+const ALLOW_ALL_CORS = CORS_ORIGIN.trim() === "*";
+if (ALLOW_ALL_CORS) {
+  console.warn("[rassam-room] WARNING: CORS_ORIGIN=* reflects any origin. Set explicit origins in production.");
+}
 
-const WS_EVENTS = {
-  JOIN: "join-room",
-  INIT: "init-room",
-  NEW_USER: "new-user",
-  USERS: "room-user-change",
-  SCENE: "scene-broadcast",
-  CURSOR: "cursor-broadcast",
-  CLIENT_SCENE: "client-scene",
-  CLIENT_CURSOR: "client-cursor",
-  CLIENT_VIEWPORT: "client-viewport",
-  VIEWPORT: "viewport-broadcast",
-  CLIENT_PRESENCE: "client-presence",
-  PRESENCE: "presence-broadcast",
-  CLIENT_FOLLOW: "client-follow",
-  FOLLOW: "follow-broadcast",
-  CLIENT_CHAT: "client-chat",
-  CHAT: "chat-broadcast",
-  CLIENT_CRDT: "client-crdt",
-  CRDT: "crdt-broadcast",
-};
+const ROOM_ID_RE = /^[A-Za-z0-9_-]{8,128}$/;
+function isValidRoomId(id) {
+  return typeof id === "string" && ROOM_ID_RE.test(id);
+}
+function cleanName(name) {
+  return typeof name === "string" ? name.trim().slice(0, 64) : undefined;
+}
+// Per-IP join throttle: 60 joins/min
+const joinBuckets = new Map();
+function joinAllowed(ip) {
+  const now = Date.now();
+  const b = joinBuckets.get(ip) || { count: 0, resetAt: now + 60_000 };
+  if (now > b.resetAt) {
+    b.count = 0;
+    b.resetAt = now + 60_000;
+  }
+  b.count += 1;
+  joinBuckets.set(ip, b);
+  if (joinBuckets.size > 2000) {
+    for (const [k, v] of joinBuckets) {
+      if (now > v.resetAt) joinBuckets.delete(k);
+      if (joinBuckets.size <= 1000) break;
+    }
+  }
+  return b.count <= 60;
+}
 
 const httpServer = http.createServer((req, res) => {
   if (req.url === "/health" || req.url === "/") {
@@ -40,8 +56,9 @@ const httpServer = http.createServer((req, res) => {
 
 const io = new Server(httpServer, {
   cors: {
-    origin: CORS_ORIGIN === "*" ? true : CORS_ORIGIN.split(","),
+    origin: ALLOW_ALL_CORS ? true : ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : false,
     methods: ["GET", "POST"],
+    credentials: false,
   },
   maxHttpBufferSize: 8e6,
 });
@@ -63,12 +80,16 @@ const emitUsers = (roomId) => {
 io.on("connection", (socket) => {
   socket.emit(WS_EVENTS.INIT);
 
-  socket.on(WS_EVENTS.JOIN, (roomId, userId, name) => {
-    if (typeof roomId !== "string" || !roomId) {
+  socket.on(WS_EVENTS.JOIN, (roomId, userId, name, readOnly) => {
+    if (!isValidRoomId(roomId)) {
       return;
     }
-    const uid = typeof userId === "string" && userId ? userId : socket.id;
-    const uname = typeof name === "string" && name ? name : undefined;
+    const ip = (socket.handshake.address || "unknown").replace(/^::ffff:/, "");
+    if (!joinAllowed(ip)) {
+      return;
+    }
+    const uid = typeof userId === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(userId) ? userId : socket.id;
+    const uname = cleanName(name);
     if (!rooms.has(roomId)) {
       rooms.set(roomId, new Map());
     }
@@ -76,12 +97,29 @@ io.on("connection", (socket) => {
     socket.join(roomId);
     socket.data.roomId = roomId;
     socket.data.userId = uid;
+    socket.data.readOnly = readOnly === true;
     socket.to(roomId).emit(WS_EVENTS.NEW_USER, uid);
     emitUsers(roomId);
   });
 
   const relay = (event, roomId, payload) => {
-    if (typeof roomId !== "string" || !roomId || payload == null) {
+    if (!isValidRoomId(roomId) || payload == null) {
+      return;
+    }
+    // Enforce membership: only relay to rooms this socket joined.
+    if (socket.data.roomId !== roomId || !socket.rooms.has(roomId)) {
+      return;
+    }
+    // Server-enforced read-only: declared read-only sockets cannot write scenes/CRDT/chat.
+    if (socket.data.readOnly && (event === WS_EVENTS.SCENE || event === WS_EVENTS.CRDT || event === WS_EVENTS.CHAT)) {
+      return;
+    }
+    // Bound payload size (~1MB JSON) to avoid amplification.
+    try {
+      if (JSON.stringify(payload).length > 1_000_000) {
+        return;
+      }
+    } catch {
       return;
     }
     socket.to(roomId).emit(event, payload);
@@ -101,18 +139,26 @@ io.on("connection", (socket) => {
 
   socket.on(WS_EVENTS.CLIENT_PRESENCE, (roomId, payload) => {
     const roomIdStr = roomId;
-    if (typeof roomIdStr !== "string" || !rooms.has(roomIdStr)) {
+    if (!isValidRoomId(roomIdStr) || !rooms.has(roomIdStr)) {
       relay(WS_EVENTS.PRESENCE, roomId, payload);
       return;
     }
-    // payload is encrypted; also accept plain status for roster UI
+    if (socket.data.roomId !== roomIdStr || !socket.rooms.has(roomIdStr)) {
+      return;
+    }
+    // payload is encrypted; also accept plain status for roster UI.
+    // Bind to authenticated socket identity — ignore spoofed userId.
     if (payload && typeof payload === "object" && payload.status && payload.userId) {
+      if (payload.userId !== socket.data.userId) {
+        return;
+      }
       const map = rooms.get(roomIdStr);
-      for (const [sid, user] of map.entries()) {
+      for (const [, user] of map.entries()) {
         if (user.id === payload.userId) {
-          user.status = payload.status;
-          if (payload.name) {
-            user.name = payload.name;
+          user.status = payload.status === "idle" ? "idle" : "active";
+          const clean = cleanName(payload.name);
+          if (clean) {
+            user.name = clean;
           }
         }
       }
@@ -122,7 +168,13 @@ io.on("connection", (socket) => {
   });
 
   socket.on(WS_EVENTS.CLIENT_FOLLOW, (roomId, payload) => {
-    if (typeof roomId !== "string" || !roomId || !payload || !payload.userId) {
+    if (!isValidRoomId(roomId) || !payload || !payload.userId) {
+      return;
+    }
+    if (socket.data.roomId !== roomId || !socket.rooms.has(roomId)) {
+      return;
+    }
+    if (payload.userId !== socket.data.userId) {
       return;
     }
     if (!follows.has(roomId)) {

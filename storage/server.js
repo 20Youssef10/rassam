@@ -19,17 +19,39 @@ const { URL } = require("url");
 const { createDriver } = require("./drivers");
 
 const PORT = Number(process.env.STORAGE_PORT || process.env.PORT || 8080);
-const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "";
+const ALLOWED_ORIGINS = CORS_ORIGIN.split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .filter((s) => s !== "*");
+const ALLOW_ALL_CORS = CORS_ORIGIN.trim() === "*";
+const TRUST_PROXY = process.env.TRUST_PROXY === "true";
 const STORAGE_URI = process.env.STORAGE_URI || "filesystem:///data";
 const MAX_BYTES = Number(process.env.STORAGE_MAX_BYTES || 8 * 1024 * 1024);
-const AUTH_TOKENS = String(
-  process.env.STORAGE_AUTH_TOKENS ||
-    process.env.STORAGE_AUTH_TOKEN ||
-    "",
-)
-  .split(",")
-  .map((t) => t.trim())
-  .filter(Boolean);
+function loadAuthTokens() {
+  const fromEnv = String(
+    process.env.STORAGE_AUTH_TOKENS ||
+      process.env.STORAGE_AUTH_TOKEN ||
+      "",
+  )
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (fromEnv.length) return fromEnv;
+  // Docker secrets / file-based token (avoids `docker inspect` exposure).
+  const filePath = process.env.STORAGE_AUTH_TOKEN_FILE;
+  if (filePath) {
+    try {
+      const fs = require("fs");
+      const content = fs.readFileSync(filePath, "utf8").trim();
+      if (content) return content.split(",").map((t) => t.trim()).filter(Boolean);
+    } catch {
+      // ignore — fall through to open
+    }
+  }
+  return [];
+}
+const AUTH_TOKENS = loadAuthTokens();
 const WRITE_RATE_LIMIT = Number(process.env.STORAGE_WRITE_RATE_LIMIT || 120);
 const REQUIRE_AUTH_READ = process.env.STORAGE_REQUIRE_AUTH_READ === "true";
 
@@ -44,10 +66,14 @@ try {
 const writeBuckets = new Map();
 
 function clientIp(req) {
+  if (TRUST_PROXY) {
+    const fwd = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+    if (fwd) return fwd.slice(0, 64);
+  }
   return (req.socket.remoteAddress || "unknown").replace(/^::ffff:/, "");
 }
 
-function rateLimited(req) {
+function rateLimited(req, res) {
   if (!WRITE_RATE_LIMIT || WRITE_RATE_LIMIT <= 0) {
     return false;
   }
@@ -60,7 +86,23 @@ function rateLimited(req) {
   }
   bucket.count += 1;
   writeBuckets.set(ip, bucket);
-  return bucket.count > WRITE_RATE_LIMIT;
+  // Evict expired buckets to bound memory.
+  if (writeBuckets.size > 2000) {
+    for (const [k, v] of writeBuckets) {
+      if (now > v.resetAt) writeBuckets.delete(k);
+      if (writeBuckets.size <= 1000) break;
+    }
+  }
+  if (bucket.count > WRITE_RATE_LIMIT) {
+    const retryAfter = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+    try {
+      res.setHeader("Retry-After", String(retryAfter));
+    } catch {
+      // ignore
+    }
+    return true;
+  }
+  return false;
 }
 
 function extractToken(req) {
@@ -72,12 +114,13 @@ function extractToken(req) {
 }
 
 function timingSafeEqualStr(a, b) {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ab.length !== bb.length) {
+  // Constant-time even for differing lengths: compare SHA-256 digests.
+  const ha = crypto.createHash("sha256").update(String(a)).digest();
+  const hb = crypto.createHash("sha256").update(String(b)).digest();
+  if (ha.length !== hb.length) {
     return false;
   }
-  return crypto.timingSafeEqual(ab, bb);
+  return crypto.timingSafeEqual(ha, hb);
 }
 
 function authOk(req) {
@@ -88,11 +131,17 @@ function authOk(req) {
   return AUTH_TOKENS.some((token) => timingSafeEqualStr(provided, token));
 }
 
-function cors(res) {
-  res.setHeader(
-    "Access-Control-Allow-Origin",
-    CORS_ORIGIN === "*" ? "*" : CORS_ORIGIN.split(",")[0].trim(),
-  );
+function cors(req, res) {
+  const origin = String(req.headers.origin || "");
+  if (ALLOW_ALL_CORS) {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+  } else if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  } else if (ALLOWED_ORIGINS.length === 1) {
+    res.setHeader("Access-Control-Allow-Origin", ALLOWED_ORIGINS[0]);
+    res.setHeader("Vary", "Origin");
+  }
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
@@ -100,8 +149,15 @@ function cors(res) {
   );
 }
 
-function json(res, status, body) {
-  cors(res);
+function securityHeaders(res) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'");
+}
+
+function json(req, res, status, body) {
+  cors(req, res);
+  securityHeaders(res);
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
 }
@@ -138,7 +194,8 @@ function readBody(req, max = MAX_BYTES) {
 }
 
 async function handle(req, res) {
-  cors(res);
+  cors(req, res);
+  securityHeaders(res);
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     res.end();
@@ -149,13 +206,11 @@ async function handle(req, res) {
   const p = url.pathname;
 
   if (p === "/health" || p === "/") {
-    json(res, 200, {
+    json(req, res, 200, {
       service: "rassam-storage",
       status: "ok",
       driver: driver.kind,
-      dataRoot: driver.root,
       authRequired: AUTH_TOKENS.length > 0,
-      tokens: AUTH_TOKENS.length,
     });
     return;
   }
@@ -163,16 +218,16 @@ async function handle(req, res) {
   const isWrite = req.method === "POST" || req.method === "PUT";
   if (isWrite) {
     if (!authOk(req)) {
-      json(res, 401, { error: "unauthorized" });
+      json(req, res, 401, { error: "unauthorized" });
       return;
     }
-    if (rateLimited(req)) {
-      json(res, 429, { error: "rate_limited" });
+    if (rateLimited(req, res)) {
+      json(req, res, 429, { error: "rate_limited" });
       return;
     }
   } else if (req.method === "GET" && REQUIRE_AUTH_READ && AUTH_TOKENS.length) {
     if (!authOk(req)) {
-      json(res, 401, { error: "unauthorized" });
+      json(req, res, 401, { error: "unauthorized" });
       return;
     }
   }
@@ -182,18 +237,18 @@ async function handle(req, res) {
       const body = await readBody(req);
       const parsed = JSON.parse(body.toString("utf8"));
       if (!parsed.c || !parsed.iv) {
-        json(res, 400, { error: "invalid_payload" });
+        json(req, res, 400, { error: "invalid_payload" });
         return;
       }
       const id = crypto.randomBytes(10).toString("hex");
       await driver.putJson("scenes", id, parsed);
-      json(res, 200, { id });
+      json(req, res, 200, { id });
     } catch (e) {
       if (e.message === "too_large") {
-        json(res, 413, { error_class: "RequestTooLargeError" });
+        json(req, res, 413, { error: "too_large" });
         return;
       }
-      json(res, 500, { error: "save_failed" });
+      json(req, res, 500, { error: "save_failed" });
     }
     return;
   }
@@ -201,18 +256,18 @@ async function handle(req, res) {
   if (req.method === "GET" && p.startsWith("/api/scenes/")) {
     const id = p.slice("/api/scenes/".length);
     if (!safeId(id)) {
-      json(res, 400, { error: "invalid_id" });
+      json(req, res, 400, { error: "invalid_id" });
       return;
     }
     try {
       const data = await driver.getJson("scenes", id);
       if (!data) {
-        json(res, 404, { error: "not_found" });
+        json(req, res, 404, { error: "not_found" });
         return;
       }
-      json(res, 200, data);
+      json(req, res, 200, data);
     } catch {
-      json(res, 500, { error: "load_failed" });
+      json(req, res, 500, { error: "load_failed" });
     }
     return;
   }
@@ -221,34 +276,35 @@ async function handle(req, res) {
   if (roomMatch) {
     const roomId = roomMatch[1];
     if (!safeId(roomId)) {
-      json(res, 400, { error: "invalid_room" });
+      json(req, res, 400, { error: "invalid_room" });
       return;
     }
     if (req.method === "GET") {
       try {
         const data = await driver.getJson("rooms", roomId);
         if (!data) {
-          json(res, 404, { error: "not_found" });
+          json(req, res, 404, { error: "not_found" });
           return;
         }
-        json(res, 200, data);
+        json(req, res, 200, data);
       } catch {
-        json(res, 500, { error: "load_failed" });
+        json(req, res, 500, { error: "load_failed" });
       }
       return;
     }
     if (isWrite) {
       try {
         const body = await readBody(req);
-        JSON.parse(body.toString("utf8"));
-        await driver.putJson("rooms", roomId, JSON.parse(body.toString("utf8")));
-        json(res, 200, { ok: true });
+        const text = body.toString("utf8");
+        const parsed = JSON.parse(text);
+        await driver.putJson("rooms", roomId, parsed);
+        json(req, res, 200, { ok: true });
       } catch (e) {
         if (e.message === "too_large") {
-          json(res, 413, { error_class: "RequestTooLargeError" });
+          json(req, res, 413, { error: "too_large" });
           return;
         }
-        json(res, 400, { error: "invalid_json" });
+        json(req, res, 400, { error: "invalid_json" });
       }
       return;
     }
@@ -257,15 +313,15 @@ async function handle(req, res) {
   if (p === "/api/library" || p.startsWith("/api/library?")) {
     const userId = url.searchParams.get("user") || "default";
     if (!safeId(userId)) {
-      json(res, 400, { error: "invalid_user" });
+      json(req, res, 400, { error: "invalid_user" });
       return;
     }
     if (req.method === "GET") {
       try {
         const data = await driver.getJson("library", userId);
-        json(res, 200, { items: data?.items ?? [] });
+        json(req, res, 200, { items: data?.items ?? [] });
       } catch {
-        json(res, 200, { items: [] });
+        json(req, res, 200, { items: [] });
       }
       return;
     }
@@ -274,15 +330,15 @@ async function handle(req, res) {
         const body = await readBody(req);
         const parsed = JSON.parse(body.toString("utf8"));
         const uid = parsed.userId && safeId(parsed.userId) ? parsed.userId : userId;
-        const items = Array.isArray(parsed.items) ? parsed.items : [];
+        const items = Array.isArray(parsed.items) ? parsed.items.slice(0, 500) : [];
         await driver.putJson("library", uid, { items, updatedAt: Date.now() });
-        json(res, 200, { ok: true, count: items.length });
+        json(req, res, 200, { ok: true, count: items.length });
       } catch (e) {
         if (e.message === "too_large") {
-          json(res, 413, { error_class: "RequestTooLargeError" });
+          json(req, res, 413, { error: "too_large" });
           return;
         }
-        json(res, 400, { error: "invalid_json" });
+        json(req, res, 400, { error: "invalid_json" });
       }
       return;
     }
@@ -292,22 +348,31 @@ async function handle(req, res) {
     const rel = p.replace(/^\/api\/files\/+/, "");
     const parts = rel.split("/").filter(Boolean);
     if (!parts.length || parts.some((s) => !safeFileSegment(s))) {
-      json(res, 400, { error: "invalid_path" });
+      json(req, res, 400, { error: "invalid_path" });
       return;
     }
     const key = parts.join("/");
+    if (key.length > 512) {
+      json(req, res, 400, { error: "invalid_path" });
+      return;
+    }
     if (req.method === "GET") {
       try {
         const buf = await driver.getBuffer("files", key);
         if (!buf) {
-          json(res, 404, { error: "not_found" });
+          json(req, res, 404, { error: "not_found" });
           return;
         }
-        cors(res);
-        res.writeHead(200, { "Content-Type": "application/octet-stream" });
+        cors(req, res);
+        securityHeaders(res);
+        res.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": 'attachment; filename="download.bin"',
+          "Content-Security-Policy": "default-src 'none'",
+        });
         res.end(buf);
       } catch {
-        json(res, 500, { error: "load_failed" });
+        json(req, res, 500, { error: "load_failed" });
       }
       return;
     }
@@ -315,27 +380,43 @@ async function handle(req, res) {
       try {
         const body = await readBody(req);
         await driver.putBuffer("files", key, body);
-        json(res, 200, { ok: true });
+        json(req, res, 200, { ok: true });
       } catch (e) {
         if (e.message === "too_large") {
-          json(res, 413, { error_class: "RequestTooLargeError" });
+          json(req, res, 413, { error: "too_large" });
           return;
         }
-        json(res, 500, { error: "upload_failed" });
+        json(req, res, 500, { error: "upload_failed" });
       }
       return;
     }
   }
 
-  json(res, 404, { error: "not_found" });
+  json(req, res, 404, { error: "not_found" });
 }
 
 http.createServer((req, res) => {
-  handle(req, res).catch(() => json(res, 500, { error: "internal" }));
+  handle(req, res).catch(() => {
+    try {
+      json(req, res, 500, { error: "internal" });
+    } catch {
+      try {
+        res.end();
+      } catch {
+        // ignore
+      }
+    }
+  });
 }).listen(PORT, () => {
+  if (!AUTH_TOKENS.length) {
+    console.warn("[rassam-storage] WARNING: no auth tokens configured — writes are open. Set STORAGE_AUTH_TOKEN in production.");
+  }
+  if (ALLOW_ALL_CORS && AUTH_TOKENS.length) {
+    console.warn("[rassam-storage] WARNING: CORS_ORIGIN=* with auth enabled. Set explicit CORS_ORIGIN in production.");
+  }
   console.log(
     `[rassam-storage] :${PORT} driver=${driver.kind} auth=${
-      AUTH_TOKENS.length ? `${AUTH_TOKENS.length} token(s)` : "open"
+      AUTH_TOKENS.length ? "required" : "open"
     }`,
   );
 });

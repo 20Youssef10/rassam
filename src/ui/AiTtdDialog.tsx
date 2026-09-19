@@ -105,14 +105,15 @@ export function AiTtdDialog({
 
         {provider.id !== "local-heuristic" && (
           <label className="rassam-ai-field">
-            <span>{locale === "ar" ? "مفتاح API" : "API key"}</span>
+            <span>{locale === "ar" ? "مفتاح API (لا يُحفظ افتراضيًا)" : "API key (not stored by default)"}</span>
             <input
               type="password"
+              autoComplete="off"
               value={provider.apiKey || ""}
               onChange={(e) => {
                 const next = { ...provider, apiKey: e.target.value };
                 setProvider(next);
-                saveAiConfig(next);
+                saveAiConfig({ ...next, apiKey: undefined });
               }}
               placeholder={provider.id === "ollama" ? "(optional)" : "sk-…"}
             />

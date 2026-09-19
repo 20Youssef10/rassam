@@ -19,14 +19,15 @@ function parseUri(uri) {
 
 function safeJoin(root, ...parts) {
   const file = path.join(root, ...parts);
-  if (!file.startsWith(root)) {
+  if (file !== root && !file.startsWith(root + path.sep)) {
     throw new Error("path_escape");
   }
   return file;
 }
 
 function createFilesystemDriver(rest) {
-  const root = path.resolve(rest.replace(/^\/+/, "") || "data");
+  const raw = String(rest || "/data");
+  const root = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(process.cwd(), raw);
   for (const dir of ["scenes", "rooms", "files", "library"]) {
     fs.mkdirSync(path.join(root, dir), { recursive: true });
   }
@@ -106,9 +107,31 @@ function createS3Driver(rest) {
   if (!endpoint || !bucketName || !accessKey || !secretKey) {
     throw new Error("s3_config_missing");
   }
+  let endpointUrl;
+  try {
+    endpointUrl = new URL(endpoint);
+  } catch {
+    throw new Error("s3_invalid_endpoint");
+  }
+  if (endpointUrl.protocol !== "https:" && endpointUrl.protocol !== "http:") {
+    throw new Error("s3_invalid_endpoint");
+  }
+  const isLocalHost =
+    endpointUrl.hostname === "localhost" ||
+    endpointUrl.hostname === "127.0.0.1" ||
+    endpointUrl.hostname === "::1";
+  if (endpointUrl.protocol === "http:" && !isLocalHost) {
+    throw new Error("s3_endpoint_must_be_https");
+  }
 
   const keyFor = (namespace, id) =>
     [prefix, namespace, id].filter(Boolean).join("/");
+
+  const encodeKey = (objectKey) =>
+    String(objectKey)
+      .split("/")
+      .map((seg) => encodeURIComponent(seg))
+      .join("/");
 
   function hmac(key, data) {
     return crypto.createHmac("sha256", key).update(data).digest();
@@ -120,16 +143,17 @@ function createS3Driver(rest) {
   async function s3Request(method, objectKey, body, contentType) {
     const host = endpoint.replace(/^https?:\/\//, "");
     const proto = endpoint.startsWith("http://") ? "http" : "https";
+    const encodedKey = encodeKey(objectKey);
     const url = pathStyle
-      ? `${proto}://${host}/${bucketName}/${objectKey}`
-      : `${proto}://${bucketName}.${host}/${objectKey}`;
+      ? `${proto}://${host}/${bucketName}/${encodedKey}`
+      : `${proto}://${bucketName}.${host}/${encodedKey}`;
     const now = new Date();
     const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
     const dateStamp = amzDate.slice(0, 8);
     const payloadHash = sha256hex(body || "");
     const canonicalUri = pathStyle
-      ? `/${bucketName}/${objectKey}`
-      : `/${objectKey}`;
+      ? `/${bucketName}/${encodedKey}`
+      : `/${encodedKey}`;
     const canonicalHeaders =
       `host:${host}\n` +
       `x-amz-content-sha256:${payloadHash}\n` +
@@ -170,6 +194,8 @@ function createS3Driver(rest) {
         ...(contentType ? { "Content-Type": contentType } : {}),
       },
       body: body || undefined,
+      redirect: "manual",
+      signal: AbortSignal.timeout(8000),
     });
     return res;
   }
@@ -277,7 +303,11 @@ function createPostgresDriver() {
       if (!res.rows.length) {
         return null;
       }
-      return JSON.parse(res.rows[0].data.toString("utf8"));
+      try {
+        return JSON.parse(res.rows[0].data.toString("utf8"));
+      } catch {
+        throw new Error("postgres_corrupt_json");
+      }
     },
     async putBuffer(namespace, key, buf) {
       await ensureSchema();

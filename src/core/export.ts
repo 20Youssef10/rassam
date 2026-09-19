@@ -4,65 +4,77 @@ import { selectionBounds } from "./geometry";
 import { hasArabic } from "./fonts";
 import type { Theme } from "../styles/tokens";
 import { canvasPaper } from "../styles/tokens";
+import {
+  escapeSvgAttr,
+  isAllowedImageDataURL,
+  sanitizeColor,
+  toSafeNumber,
+} from "./security";
 
 function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  return escapeSvgAttr(s);
+}
+
+function num(n: unknown): number {
+  const v = toSafeNumber(n, 0);
+  return Math.round(v * 100) / 100;
 }
 
 function elToSvg(el: RassamElement, files?: Record<string, FilePayload>): string {
-  const common = `stroke="${el.stroke}" stroke-width="${el.strokeWidth}" fill="${
-    el.fill === "transparent" ? "none" : el.fill
-  }" opacity="${el.opacity}"`;
+  const stroke = sanitizeColor(el.stroke);
+  const fillRaw = el.fill === "transparent" ? "none" : sanitizeColor(el.fill, "none");
+  const strokeWidth = Math.max(0, Math.min(64, num(el.strokeWidth)));
+  const opacity = Math.max(0, Math.min(1, Number(el.opacity) || 0));
+  const common = `stroke="${escapeSvgAttr(stroke)}" stroke-width="${strokeWidth}" fill="${escapeSvgAttr(fillRaw)}" opacity="${opacity}"`;
 
   if (el.type === "rectangle") {
-    return `<rect x="${el.x}" y="${el.y}" width="${el.width}" height="${el.height}" ${common} />`;
+    return `<rect x="${num(el.x)}" y="${num(el.y)}" width="${Math.max(0, num(el.width))}" height="${Math.max(0, num(el.height))}" ${common} />`;
   }
   if (el.type === "ellipse") {
-    return `<ellipse cx="${el.x + el.width / 2}" cy="${el.y + el.height / 2}" rx="${el.width / 2}" ry="${el.height / 2}" ${common} />`;
+    return `<ellipse cx="${num(el.x + el.width / 2)}" cy="${num(el.y + el.height / 2)}" rx="${Math.max(0, num(el.width / 2))}" ry="${Math.max(0, num(el.height / 2))}" ${common} />`;
   }
   if (el.type === "diamond") {
     const cx = el.x + el.width / 2;
     const cy = el.y + el.height / 2;
-    const points = `${cx},${el.y} ${el.x + el.width},${cy} ${cx},${el.y + el.height} ${el.x},${cy}`;
-    return `<polygon points="${points}" ${common} />`;
+    const points = `${num(cx)},${num(el.y)} ${num(el.x + el.width)},${num(cy)} ${num(cx)},${num(el.y + el.height)} ${num(el.x)},${num(cy)}`;
+    return `<polygon points="${escapeSvgAttr(points)}" ${common} />`;
   }
   if (el.type === "line" || el.type === "arrow" || el.type === "draw") {
-    const pts = el.points.map((p) => `${p.x},${p.y}`).join(" ");
+    const rawPts = Array.isArray(el.points) ? el.points.slice(0, 2000) : [];
+    const pts = rawPts.map((p) => `${num(p.x)},${num(p.y)}`).join(" ");
     let extra = "";
     if (el.type === "arrow" && el.points.length >= 2) {
       const start = el.points[0];
       const end = el.points[el.points.length - 1];
       const angle = Math.atan2(end.y - start.y, end.x - start.x);
-      const size = 12 + el.strokeWidth * 2;
+      const size = 12 + strokeWidth * 2;
       const a1 = angle + Math.PI - Math.PI / 7;
       const a2 = angle + Math.PI + Math.PI / 7;
-      const h1 = `${end.x + size * Math.cos(a1)},${end.y + size * Math.sin(a1)}`;
-      const h2 = `${end.x + size * Math.cos(a2)},${end.y + size * Math.sin(a2)}`;
-      extra = `<polyline points="${h1} ${end.x},${end.y} ${h2}" fill="none" stroke="${el.stroke}" stroke-width="${el.strokeWidth}" />`;
+      const h1 = `${num(end.x + size * Math.cos(a1))},${num(end.y + size * Math.sin(a1))}`;
+      const h2 = `${num(end.x + size * Math.cos(a2))},${num(end.y + size * Math.sin(a2))}`;
+      extra = `<polyline points="${escapeSvgAttr(`${h1} ${num(end.x)},${num(end.y)} ${h2}`)}" fill="none" stroke="${escapeSvgAttr(stroke)}" stroke-width="${strokeWidth}" />`;
     }
-    return `<polyline points="${pts}" fill="none" stroke="${el.stroke}" stroke-width="${el.strokeWidth}" opacity="${el.opacity}" stroke-linecap="round" stroke-linejoin="round" />${extra}`;
+    return `<polyline points="${escapeSvgAttr(pts)}" fill="none" stroke="${escapeSvgAttr(stroke)}" stroke-width="${strokeWidth}" opacity="${opacity}" stroke-linecap="round" stroke-linejoin="round" />${extra}`;
   }
   if (el.type === "text") {
     const family = hasArabic(el.text) ? el.fontFamily || ARABIC_FONT : el.fontFamily || "sans-serif";
-    const lines = el.text.split("\n");
+    const safeText = String(el.text || "").slice(0, 5000);
+    const fontSize = Math.max(1, Math.min(256, num(el.fontSize)));
+    const lines = safeText.split("\n").slice(0, 200);
     const tspans = lines
       .map(
         (line, i) =>
-          `<tspan x="${el.x}" y="${el.y + el.fontSize * (i + 0.85)}">${escapeXml(line)}</tspan>`,
+          `<tspan x="${num(el.x)}" y="${num(el.y + fontSize * (i + 0.85))}">${escapeXml(line)}</tspan>`,
       )
       .join("");
-    return `<text fill="${el.stroke}" font-family="${escapeXml(family)}" font-size="${el.fontSize}" font-weight="600" opacity="${el.opacity}" direction="${hasArabic(el.text) ? "rtl" : "ltr"}" xml:space="preserve">${tspans}</text>`;
+    return `<text fill="${escapeSvgAttr(stroke)}" font-family="${escapeSvgAttr(family.slice(0, 128))}" font-size="${fontSize}" font-weight="600" opacity="${opacity}" direction="${hasArabic(safeText) ? "rtl" : "ltr"}" xml:space="preserve">${tspans}</text>`;
   }
   if (el.type === "image") {
     const file = files?.[el.fileId];
-    if (!file) {
-      return `<rect x="${el.x}" y="${el.y}" width="${el.width}" height="${el.height}" fill="#E2E8F0" stroke="#94A3B8" />`;
+    if (!file || !isAllowedImageDataURL(file.dataURL)) {
+      return `<rect x="${num(el.x)}" y="${num(el.y)}" width="${Math.max(0, num(el.width))}" height="${Math.max(0, num(el.height))}" fill="#E2E8F0" stroke="#94A3B8" />`;
     }
-    return `<image x="${el.x}" y="${el.y}" width="${el.width}" height="${el.height}" href="${file.dataURL}" opacity="${el.opacity}" preserveAspectRatio="xMidYMid meet" />`;
+    return `<image x="${num(el.x)}" y="${num(el.y)}" width="${Math.max(0, num(el.width))}" height="${Math.max(0, num(el.height))}" href="${escapeSvgAttr(file.dataURL)}" opacity="${opacity}" preserveAspectRatio="xMidYMid meet" />`;
   }
   return "";
 }

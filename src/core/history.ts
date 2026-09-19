@@ -190,6 +190,7 @@ export function listSnapshots(): SceneSnapshot[] {
   try {
     return JSON.parse(localStorage.getItem(SNAP_KEY) || "[]") as SceneSnapshot[];
   } catch {
+    // Corrupt snapshot cache is not fatal — start empty.
     return [];
   }
 }
@@ -207,8 +208,8 @@ export function saveSnapshot(
   const all = [...listSnapshots(), snap].slice(-30);
   try {
     localStorage.setItem(SNAP_KEY, JSON.stringify(all));
-  } catch {
-    // quota
+  } catch (error) {
+    console.warn("Rassam: snapshot save failed (quota?)", error);
   }
   return snap;
 }

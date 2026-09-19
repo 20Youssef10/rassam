@@ -23,70 +23,7 @@ function normalizeHex(color: string): string {
   return "#0F172A";
 }
 
-export function TopBar({
-  messages,
-  theme,
-  strokeWidth,
-  zoom,
-  elementCount,
-  selectionCount,
-  undoDisabled,
-  redoDisabled,
-  collabStatus,
-  collabLink,
-  onUndo,
-  onRedo,
-  onClear,
-  onExportPng,
-  onExportPng2x,
-  onExportPdf,
-  onCopyPng,
-  onExportSvg,
-  onExportSvgSelection,
-  onExportJson,
-  onImportJson,
-  onToggleHelp,
-  onToggleGrid,
-  onToggleSnap,
-  onToggleStats,
-  onToggleMinimap,
-  onOpenPalette,
-  onToggleZen,
-  onToggleViewOnly,
-  onOpenMermaid,
-  onStartPresentation,
-  onZoomIn,
-  onZoomOut,
-  onFitContent,
-  onExportSelectedFrame,
-  onImportExcalidraw,
-  onToggleLayers,
-  onToggleChat,
-  onOpenAi,
-  onSaveSnapshot,
-  onAddComment,
-  onOpacityChange,
-  onStrokeStyleChange,
-  opacity,
-  strokeStyle,
-  zenMode,
-  viewOnly,
-  gridEnabled,
-  snapEnabled,
-  onToggleTheme,
-  onToggleLocale,
-  onAlign,
-  onDistribute,
-  onStartCollab,
-  onStartShareReadonly,
-  onStopCollab,
-  onCopyLink,
-  stroke,
-  fill,
-  onStrokeChange,
-  onFillChange,
-  onStrokeWidthChange,
-}: {
+export type TopBarProps = {
   messages: Messages;
   theme: Theme;
   strokeWidth: number;
@@ -149,18 +86,467 @@ export function TopBar({
   onStrokeChange: (c: string) => void;
   onFillChange: (c: string) => void;
   onStrokeWidthChange: (w: number) => void;
-}) {
-  const collabLabel =
-    collabStatus === "connected"
-      ? messages.collab.connected
-      : collabStatus === "connecting"
-        ? messages.collab.connecting
-        : collabStatus === "read-only"
-          ? messages.collab.readOnly
-          : collabStatus === "error"
-            ? messages.collab.offline
-            : "";
+};
 
+type StyleSlice = Pick<
+  TopBarProps,
+  | "messages" | "stroke" | "fill" | "strokeWidth" | "opacity" | "strokeStyle"
+  | "onStrokeChange" | "onFillChange" | "onStrokeWidthChange"
+  | "onOpacityChange" | "onStrokeStyleChange"
+>;
+
+type ViewSlice = Pick<
+  TopBarProps,
+  | "messages" | "selectionCount"
+  | "onZoomIn" | "onZoomOut" | "onFitContent" | "onExportSelectedFrame"
+  | "onImportExcalidraw" | "onToggleLayers" | "onToggleChat" | "onOpenAi"
+  | "onSaveSnapshot" | "onAddComment"
+  | "onOpenMermaid" | "onStartPresentation"
+>;
+
+type AlignSlice = Pick<TopBarProps, "messages" | "selectionCount" | "onAlign" | "onDistribute">;
+
+type ExportSlice = Pick<
+  TopBarProps,
+  | "messages" | "theme" | "elementCount" | "selectionCount" | "zoom"
+  | "undoDisabled" | "redoDisabled" | "gridEnabled" | "snapEnabled"
+  | "zenMode" | "viewOnly"
+  | "onUndo" | "onRedo" | "onClear" | "onExportPng" | "onExportPng2x"
+  | "onExportPdf" | "onCopyPng" | "onExportSvg" | "onExportSvgSelection"
+  | "onExportJson" | "onImportJson" | "onToggleGrid" | "onToggleSnap"
+  | "onToggleHelp" | "onOpenPalette" | "onOpenMermaid" | "onStartPresentation"
+  | "onToggleZen" | "onToggleViewOnly"
+  | "onToggleStats" | "onToggleMinimap"
+  | "onToggleTheme" | "onToggleLocale"
+>;
+
+type CollabSlice = Pick<
+  TopBarProps,
+  "messages" | "collabStatus" | "collabLink" | "onStartCollab" | "onStartShareReadonly" | "onStopCollab" | "onCopyLink"
+>;
+
+function StyleControls({ slice }: { slice: StyleSlice }) {
+  const {
+    messages, stroke, fill, strokeWidth, opacity, strokeStyle,
+    onStrokeChange, onFillChange, onStrokeWidthChange, onOpacityChange, onStrokeStyleChange,
+  } = slice;
+  return (
+    <>
+      <div className="rassam-swatches" aria-label={messages.properties.stroke}>
+        <span className="rassam-label">{messages.properties.stroke}</span>
+        {strokePalette.map((c) => (
+          <button
+            key={`s-${c}`}
+            type="button"
+            className={`rassam-swatch ${stroke === c ? "is-active" : ""}`}
+            style={{ background: c }}
+            onClick={() => onStrokeChange(c)}
+            aria-label={c}
+          />
+        ))}
+        <label className="rassam-hex-picker">
+          <input
+            type="color"
+            value={stroke && stroke !== "transparent" ? normalizeHex(stroke) : "#0F172A"}
+            onChange={(e) => onStrokeChange(e.target.value)}
+            aria-label="hex stroke"
+          />
+          <input
+            type="text"
+            value={stroke}
+            onChange={(e) => onStrokeChange(e.target.value)}
+            aria-label="stroke hex"
+          />
+        </label>
+      </div>
+      <div className="rassam-swatches" aria-label={messages.properties.fill}>
+        <span className="rassam-label">{messages.properties.fill}</span>
+        {fillPalette.map((c) => (
+          <button
+            key={`f-${c}`}
+            type="button"
+            className={`rassam-swatch ${fill === c ? "is-active" : ""} ${
+              c === "transparent" ? "is-transparent" : ""
+            }`}
+            style={{ background: c === "transparent" ? undefined : c }}
+            onClick={() => onFillChange(c)}
+            aria-label={c}
+          >
+            {c === "transparent" ? "∅" : undefined}
+          </button>
+        ))}
+      </div>
+      <label className="rassam-range">
+        <span>{messages.properties.strokeWidth}</span>
+        <input
+          type="range"
+          min={1}
+          max={8}
+          value={strokeWidth}
+          onChange={(e) => onStrokeWidthChange(Number(e.target.value))}
+        />
+      </label>
+      <label className="rassam-range">
+        <span>{localeOpacityLabel(messages)}</span>
+        <input
+          type="range"
+          min={10}
+          max={100}
+          value={Math.round(opacity * 100)}
+          onChange={(e) => onOpacityChange(Number(e.target.value) / 100)}
+        />
+      </label>
+      <select
+        className="rassam-stroke-style"
+        value={strokeStyle}
+        onChange={(e) =>
+          onStrokeStyleChange(e.target.value as "solid" | "dashed" | "dotted")
+        }
+        aria-label="stroke style"
+      >
+        <option value="solid">—</option>
+        <option value="dashed">--- </option>
+        <option value="dotted">···</option>
+      </select>
+    </>
+  );
+}
+
+function ViewControls({ slice }: { slice: ViewSlice }) {
+  const {
+    messages, selectionCount,
+    onZoomIn, onZoomOut, onFitContent, onExportSelectedFrame,
+    onImportExcalidraw, onToggleLayers, onToggleChat, onOpenAi,
+    onSaveSnapshot, onAddComment,
+    onOpenMermaid, onStartPresentation,
+  } = slice;
+  return (
+    <>
+      <div className="rassam-zoom-group">
+        <button type="button" onClick={onZoomOut} title="−">
+          −
+        </button>
+        <button type="button" onClick={onZoomIn} title="+">
+          +
+        </button>
+        <button type="button" onClick={onFitContent} title="fit">
+          ⤢
+        </button>
+      </div>
+      {selectionCount >= 1 && (
+        <button type="button" onClick={onExportSelectedFrame} title="export frame">
+          ▣
+        </button>
+      )}
+      <button type="button" onClick={onImportExcalidraw} title=".excalidraw">
+        .excalidraw
+      </button>
+      <button type="button" onClick={onToggleLayers} title={messages.advanced.layers}>
+        {messages.advanced.layers}
+      </button>
+      <button type="button" onClick={onToggleChat} title={messages.advanced.chat}>
+        {messages.advanced.chat}
+      </button>
+      <button type="button" onClick={onOpenAi} title={messages.advanced.ai}>
+        {messages.advanced.ai}
+      </button>
+      <button type="button" onClick={onSaveSnapshot} title="snapshot">
+        {messages.dir === "rtl" ? "لقطة" : "Snapshot"}
+      </button>
+      <button type="button" onClick={onAddComment} title="comment">
+        {messages.dir === "rtl" ? "تعليق" : "Comment"}
+      </button>
+      <button type="button" onClick={onOpenMermaid} title={messages.advanced.mermaid}>
+        {messages.advanced.mermaid}
+      </button>
+      <button type="button" onClick={onStartPresentation} title={messages.advanced.present}>
+        {messages.advanced.present}
+      </button>
+    </>
+  );
+}
+
+function AlignControls({ slice }: { slice: AlignSlice }) {
+  const { messages, selectionCount, onAlign, onDistribute } = slice;
+  if (selectionCount < 2) {
+    return null;
+  }
+  return (
+    <div className="rassam-align-group">
+      <button type="button" onClick={() => onAlign("left")} title={messages.actions.alignLeft}>
+        ⇤
+      </button>
+      <button type="button" onClick={() => onAlign("centerH")} title={messages.actions.alignCenterH}>
+        ↔
+      </button>
+      <button type="button" onClick={() => onAlign("right")} title={messages.actions.alignRight}>
+        ⇥
+      </button>
+      <button type="button" onClick={() => onAlign("top")} title={messages.actions.alignTop}>
+        ⇤
+      </button>
+      <button type="button" onClick={() => onAlign("centerV")} title={messages.actions.alignCenterV}>
+        ↕
+      </button>
+      <button type="button" onClick={() => onAlign("bottom")} title={messages.actions.alignBottom}>
+        ⇥
+      </button>
+      <button type="button" onClick={() => onDistribute("x")} title={messages.actions.distributeX}>
+        ⇔
+      </button>
+      <button type="button" onClick={() => onDistribute("y")} title={messages.actions.distributeY}>
+        ⇕
+      </button>
+    </div>
+  );
+}
+
+function collabLabelFor(status: CollabStatus, messages: Messages): string {
+  if (status === "connected") {
+    return messages.collab.connected;
+  }
+  if (status === "connecting") {
+    return messages.collab.connecting;
+  }
+  if (status === "read-only") {
+    return messages.collab.readOnly;
+  }
+  if (status === "error") {
+    return messages.collab.offline;
+  }
+  return "";
+}
+
+function ExportControls({ slice, collabLabel }: { slice: ExportSlice; collabLabel: string }) {
+  const {
+    messages, theme, elementCount, selectionCount, zoom,
+    undoDisabled, redoDisabled, gridEnabled, snapEnabled, zenMode, viewOnly,
+    onUndo, onRedo, onClear, onExportPng, onExportPng2x,
+    onExportPdf, onCopyPng, onExportSvg, onExportSvgSelection,
+    onExportJson, onImportJson, onToggleGrid, onToggleSnap,
+    onToggleHelp, onOpenPalette, onOpenMermaid, onStartPresentation,
+    onToggleZen, onToggleViewOnly,
+    onToggleStats, onToggleMinimap,
+    onToggleTheme, onToggleLocale,
+  } = slice;
+  return (
+    <>
+      <span className="rassam-meta">
+        {elementCount} {messages.status.elements}
+        {selectionCount > 0 ? ` · ${selectionCount} ${messages.status.selected}` : ""}
+        {" · "}
+        {Math.round(zoom * 100)}%
+        {collabLabel ? ` · ${collabLabel}` : ""}
+      </span>
+      <button type="button" onClick={onUndo} disabled={undoDisabled}>
+        {messages.actions.undo}
+      </button>
+      <button type="button" onClick={onRedo} disabled={redoDisabled}>
+        {messages.actions.redo}
+      </button>
+      <button type="button" onClick={onExportPng}>
+        {messages.actions.exportPng}
+      </button>
+      <button type="button" onClick={onExportPng2x} title="PNG@2x">
+        PNG@2x
+      </button>
+      <button type="button" onClick={onExportPdf} title="PDF">
+        PDF
+      </button>
+      <button type="button" onClick={onCopyPng} title="copy image">
+        ⎘PNG
+      </button>
+      <button type="button" onClick={onExportSvg}>
+        {messages.actions.exportSvg}
+      </button>
+      {selectionCount > 0 && (
+        <button type="button" onClick={onExportSvgSelection}>
+          SVG*
+        </button>
+      )}
+      <button type="button" onClick={onExportJson}>
+        {messages.actions.exportJson}
+      </button>
+      <button type="button" onClick={onImportJson}>
+        {messages.actions.importJson}
+      </button>
+      <button
+        type="button"
+        onClick={onToggleGrid}
+        aria-pressed={gridEnabled}
+        title={messages.actions.grid}
+      >
+        {gridEnabled ? "▦" : "▢"} {messages.actions.grid}
+      </button>
+      <button
+        type="button"
+        onClick={onToggleSnap}
+        aria-pressed={snapEnabled}
+        title={messages.actions.snap}
+      >
+        {messages.actions.snap}
+      </button>
+      <button type="button" onClick={onToggleHelp} title={messages.actions.help}>
+        ?
+      </button>
+      <button type="button" onClick={onOpenPalette} title={messages.advanced.palette}>
+        ⌘K
+      </button>
+      <button type="button" onClick={onOpenMermaid} title={messages.advanced.mermaid}>
+        {messages.advanced.mermaid}
+      </button>
+      <button type="button" onClick={onStartPresentation} title={messages.advanced.present}>
+        {messages.advanced.present}
+      </button>
+      <button
+        type="button"
+        onClick={onToggleZen}
+        aria-pressed={zenMode}
+        title={messages.advanced.zen}
+      >
+        {messages.advanced.zen}
+      </button>
+      <button
+        type="button"
+        onClick={onToggleViewOnly}
+        aria-pressed={viewOnly}
+        title={messages.advanced.viewOnly}
+      >
+        {messages.advanced.viewOnly}
+      </button>
+      <button type="button" onClick={onToggleStats} title={messages.advanced.stats}>
+        {messages.advanced.stats}
+      </button>
+      <button type="button" onClick={onToggleMinimap} title={messages.advanced.minimap}>
+        {messages.advanced.minimap}
+      </button>
+      <button type="button" onClick={onClear}>
+        {messages.actions.clear}
+      </button>
+      <button type="button" onClick={onToggleTheme} title={messages.actions.theme}>
+        {theme === "dark" ? "☀" : "☾"}
+      </button>
+      <button type="button" onClick={onToggleLocale}>
+        {messages.actions.language}
+      </button>
+    </>
+  );
+}
+
+function CollabControls({ slice }: { slice: CollabSlice }) {
+  const {
+    messages, collabStatus, collabLink,
+    onStartCollab, onStartShareReadonly, onStopCollab, onCopyLink,
+  } = slice;
+  if (collabStatus === "idle" || collabStatus === "error") {
+    return (
+      <>
+        <button type="button" onClick={onStartCollab}>
+          {messages.collab.start}
+        </button>
+        <button type="button" onClick={onStartShareReadonly}>
+          {messages.collab.shareReadOnly}
+        </button>
+      </>
+    );
+  }
+  return (
+    <>
+      {collabLink && (
+        <button type="button" onClick={onCopyLink}>
+          {messages.collab.copyLink}
+        </button>
+      )}
+      <button type="button" onClick={onStopCollab}>
+        {messages.collab.stop}
+      </button>
+    </>
+  );
+}
+
+export function TopBar(props: TopBarProps) {
+  const { messages, collabStatus } = props;
+  const collabLabel = collabLabelFor(collabStatus, messages);
+  const styleSlice: StyleSlice = {
+    messages: props.messages,
+    stroke: props.stroke,
+    fill: props.fill,
+    strokeWidth: props.strokeWidth,
+    opacity: props.opacity,
+    strokeStyle: props.strokeStyle,
+    onStrokeChange: props.onStrokeChange,
+    onFillChange: props.onFillChange,
+    onStrokeWidthChange: props.onStrokeWidthChange,
+    onOpacityChange: props.onOpacityChange,
+    onStrokeStyleChange: props.onStrokeStyleChange,
+  };
+  const viewSlice: ViewSlice = {
+    messages: props.messages,
+    selectionCount: props.selectionCount,
+    onZoomIn: props.onZoomIn,
+    onZoomOut: props.onZoomOut,
+    onFitContent: props.onFitContent,
+    onExportSelectedFrame: props.onExportSelectedFrame,
+    onImportExcalidraw: props.onImportExcalidraw,
+    onToggleLayers: props.onToggleLayers,
+    onToggleChat: props.onToggleChat,
+    onOpenAi: props.onOpenAi,
+    onSaveSnapshot: props.onSaveSnapshot,
+    onAddComment: props.onAddComment,
+    onOpenMermaid: props.onOpenMermaid,
+    onStartPresentation: props.onStartPresentation,
+  };
+  const alignSlice: AlignSlice = {
+    messages: props.messages,
+    selectionCount: props.selectionCount,
+    onAlign: props.onAlign,
+    onDistribute: props.onDistribute,
+  };
+  const exportSlice: ExportSlice = {
+    messages: props.messages,
+    theme: props.theme,
+    elementCount: props.elementCount,
+    selectionCount: props.selectionCount,
+    zoom: props.zoom,
+    undoDisabled: props.undoDisabled,
+    redoDisabled: props.redoDisabled,
+    gridEnabled: props.gridEnabled,
+    snapEnabled: props.snapEnabled,
+    zenMode: props.zenMode,
+    viewOnly: props.viewOnly,
+    onUndo: props.onUndo,
+    onRedo: props.onRedo,
+    onClear: props.onClear,
+    onExportPng: props.onExportPng,
+    onExportPng2x: props.onExportPng2x,
+    onExportPdf: props.onExportPdf,
+    onCopyPng: props.onCopyPng,
+    onExportSvg: props.onExportSvg,
+    onExportSvgSelection: props.onExportSvgSelection,
+    onExportJson: props.onExportJson,
+    onImportJson: props.onImportJson,
+    onToggleGrid: props.onToggleGrid,
+    onToggleSnap: props.onToggleSnap,
+    onToggleHelp: props.onToggleHelp,
+    onOpenPalette: props.onOpenPalette,
+    onOpenMermaid: props.onOpenMermaid,
+    onStartPresentation: props.onStartPresentation,
+    onToggleZen: props.onToggleZen,
+    onToggleViewOnly: props.onToggleViewOnly,
+    onToggleStats: props.onToggleStats,
+    onToggleMinimap: props.onToggleMinimap,
+    onToggleTheme: props.onToggleTheme,
+    onToggleLocale: props.onToggleLocale,
+  };
+  const collabSlice: CollabSlice = {
+    messages: props.messages,
+    collabStatus: props.collabStatus,
+    collabLink: props.collabLink,
+    onStartCollab: props.onStartCollab,
+    onStartShareReadonly: props.onStartShareReadonly,
+    onStopCollab: props.onStopCollab,
+    onCopyLink: props.onCopyLink,
+  };
   return (
     <header className="rassam-topbar" dir={messages.dir}>
       <div className="rassam-brand">
@@ -178,266 +564,14 @@ export function TopBar({
       </div>
 
       <div className="rassam-topbar-center">
-        <div className="rassam-swatches" aria-label={messages.properties.stroke}>
-          <span className="rassam-label">{messages.properties.stroke}</span>
-          {strokePalette.map((c) => (
-            <button
-              key={`s-${c}`}
-              type="button"
-              className={`rassam-swatch ${stroke === c ? "is-active" : ""}`}
-              style={{ background: c }}
-              onClick={() => onStrokeChange(c)}
-              aria-label={c}
-            />
-          ))}
-          <label className="rassam-hex-picker">
-            <input
-              type="color"
-              value={stroke && stroke !== "transparent" ? normalizeHex(stroke) : "#0F172A"}
-              onChange={(e) => onStrokeChange(e.target.value)}
-              aria-label="hex stroke"
-            />
-            <input
-              type="text"
-              value={stroke}
-              onChange={(e) => onStrokeChange(e.target.value)}
-              aria-label="stroke hex"
-            />
-          </label>
-        </div>
-        <div className="rassam-swatches" aria-label={messages.properties.fill}>
-          <span className="rassam-label">{messages.properties.fill}</span>
-          {fillPalette.map((c) => (
-            <button
-              key={`f-${c}`}
-              type="button"
-              className={`rassam-swatch ${fill === c ? "is-active" : ""} ${
-                c === "transparent" ? "is-transparent" : ""
-              }`}
-              style={{ background: c === "transparent" ? undefined : c }}
-              onClick={() => onFillChange(c)}
-              aria-label={c}
-            >
-              {c === "transparent" ? "∅" : undefined}
-            </button>
-          ))}
-        </div>
-        <label className="rassam-range">
-          <span>{messages.properties.strokeWidth}</span>
-          <input
-            type="range"
-            min={1}
-            max={8}
-            value={strokeWidth}
-            onChange={(e) => onStrokeWidthChange(Number(e.target.value))}
-          />
-        </label>
-        <label className="rassam-range">
-          <span>{localeOpacityLabel(messages)}</span>
-          <input
-            type="range"
-            min={10}
-            max={100}
-            value={Math.round(opacity * 100)}
-            onChange={(e) => onOpacityChange(Number(e.target.value) / 100)}
-          />
-        </label>
-        <select
-          className="rassam-stroke-style"
-          value={strokeStyle}
-          onChange={(e) =>
-            onStrokeStyleChange(e.target.value as "solid" | "dashed" | "dotted")
-          }
-          aria-label="stroke style"
-        >
-          <option value="solid">—</option>
-          <option value="dashed">--- </option>
-          <option value="dotted">···</option>
-        </select>
-        <div className="rassam-zoom-group">
-          <button type="button" onClick={onZoomOut} title="−">
-            −
-          </button>
-          <button type="button" onClick={onZoomIn} title="+">
-            +
-          </button>
-          <button type="button" onClick={onFitContent} title="fit">
-            ⤢
-          </button>
-        </div>
-        {selectionCount >= 1 && (
-          <button type="button" onClick={onExportSelectedFrame} title="export frame">
-            ▣
-          </button>
-        )}
-        <button type="button" onClick={onImportExcalidraw} title=".excalidraw">
-          .excalidraw
-        </button>
-        <button type="button" onClick={onToggleLayers} title={messages.advanced.layers}>
-          {messages.advanced.layers}
-        </button>
-        <button type="button" onClick={onToggleChat} title={messages.advanced.chat}>
-          {messages.advanced.chat}
-        </button>
-        <button type="button" onClick={onOpenAi} title={messages.advanced.ai}>
-          {messages.advanced.ai}
-        </button>
-        <button type="button" onClick={onSaveSnapshot} title="snapshot">
-          {messages.dir === "rtl" ? "لقطة" : "Snapshot"}
-        </button>
-        <button type="button" onClick={onAddComment} title="comment">
-          {messages.dir === "rtl" ? "تعليق" : "Comment"}
-        </button>
-        {selectionCount >= 2 && (
-          <div className="rassam-align-group">
-            <button type="button" onClick={() => onAlign("left")} title={messages.actions.alignLeft}>
-              ⇤
-            </button>
-            <button type="button" onClick={() => onAlign("centerH")} title={messages.actions.alignCenterH}>
-              ↔
-            </button>
-            <button type="button" onClick={() => onAlign("right")} title={messages.actions.alignRight}>
-              ⇥
-            </button>
-            <button type="button" onClick={() => onAlign("top")} title={messages.actions.alignTop}>
-              ⇤
-            </button>
-            <button type="button" onClick={() => onAlign("centerV")} title={messages.actions.alignCenterV}>
-              ↕
-            </button>
-            <button type="button" onClick={() => onAlign("bottom")} title={messages.actions.alignBottom}>
-              ⇥
-            </button>
-            <button type="button" onClick={() => onDistribute("x")} title={messages.actions.distributeX}>
-              ⇔
-            </button>
-            <button type="button" onClick={() => onDistribute("y")} title={messages.actions.distributeY}>
-              ⇕
-            </button>
-          </div>
-        )}
+        <StyleControls slice={styleSlice} />
+        <ViewControls slice={viewSlice} />
+        <AlignControls slice={alignSlice} />
       </div>
 
       <div className="rassam-topbar-actions">
-        <span className="rassam-meta">
-          {elementCount} {messages.status.elements}
-          {selectionCount > 0 ? ` · ${selectionCount} ${messages.status.selected}` : ""}
-          {" · "}
-          {Math.round(zoom * 100)}%
-          {collabLabel ? ` · ${collabLabel}` : ""}
-        </span>
-        <button type="button" onClick={onUndo} disabled={undoDisabled}>
-          {messages.actions.undo}
-        </button>
-        <button type="button" onClick={onRedo} disabled={redoDisabled}>
-          {messages.actions.redo}
-        </button>
-        <button type="button" onClick={onExportPng}>
-          {messages.actions.exportPng}
-        </button>
-        <button type="button" onClick={onExportPng2x} title="PNG@2x">
-          PNG@2x
-        </button>
-        <button type="button" onClick={onExportPdf} title="PDF">
-          PDF
-        </button>
-        <button type="button" onClick={onCopyPng} title="copy image">
-          ⎘PNG
-        </button>
-        <button type="button" onClick={onExportSvg}>
-          {messages.actions.exportSvg}
-        </button>
-        {selectionCount > 0 && (
-          <button type="button" onClick={onExportSvgSelection}>
-            SVG*
-          </button>
-        )}
-        <button type="button" onClick={onExportJson}>
-          {messages.actions.exportJson}
-        </button>
-        <button type="button" onClick={onImportJson}>
-          {messages.actions.importJson}
-        </button>
-        <button
-          type="button"
-          onClick={onToggleGrid}
-          aria-pressed={gridEnabled}
-          title={messages.actions.grid}
-        >
-          {gridEnabled ? "▦" : "▢"} {messages.actions.grid}
-        </button>
-        <button
-          type="button"
-          onClick={onToggleSnap}
-          aria-pressed={snapEnabled}
-          title={messages.actions.snap}
-        >
-          {messages.actions.snap}
-        </button>
-        <button type="button" onClick={onToggleHelp} title={messages.actions.help}>
-          ?
-        </button>
-        <button type="button" onClick={onOpenPalette} title={messages.advanced.palette}>
-          ⌘K
-        </button>
-        <button type="button" onClick={onOpenMermaid} title={messages.advanced.mermaid}>
-          {messages.advanced.mermaid}
-        </button>
-        <button type="button" onClick={onStartPresentation} title={messages.advanced.present}>
-          {messages.advanced.present}
-        </button>
-        <button
-          type="button"
-          onClick={onToggleZen}
-          aria-pressed={zenMode}
-          title={messages.advanced.zen}
-        >
-          {messages.advanced.zen}
-        </button>
-        <button
-          type="button"
-          onClick={onToggleViewOnly}
-          aria-pressed={viewOnly}
-          title={messages.advanced.viewOnly}
-        >
-          {messages.advanced.viewOnly}
-        </button>
-        <button type="button" onClick={onToggleStats} title={messages.advanced.stats}>
-          {messages.advanced.stats}
-        </button>
-        <button type="button" onClick={onToggleMinimap} title={messages.advanced.minimap}>
-          {messages.advanced.minimap}
-        </button>
-        {collabStatus === "idle" || collabStatus === "error" ? (
-          <>
-            <button type="button" onClick={onStartCollab}>
-              {messages.collab.start}
-            </button>
-            <button type="button" onClick={onStartShareReadonly}>
-              {messages.collab.shareReadOnly}
-            </button>
-          </>
-        ) : (
-          <>
-            {collabLink && (
-              <button type="button" onClick={onCopyLink}>
-                {messages.collab.copyLink}
-              </button>
-            )}
-            <button type="button" onClick={onStopCollab}>
-              {messages.collab.stop}
-            </button>
-          </>
-        )}
-        <button type="button" onClick={onClear}>
-          {messages.actions.clear}
-        </button>
-        <button type="button" onClick={onToggleTheme} title={messages.actions.theme}>
-          {theme === "dark" ? "☀" : "☾"}
-        </button>
-        <button type="button" onClick={onToggleLocale}>
-          {messages.actions.language}
-        </button>
+        <ExportControls slice={exportSlice} collabLabel={collabLabel} />
+        <CollabControls slice={collabSlice} />
       </div>
     </header>
   );

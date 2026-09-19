@@ -143,7 +143,7 @@ export function loadUserPluginsFromStorage(): void {
       }
     }
   } catch {
-    // ignore
+    // Corrupt plugin cache is not fatal — start with builtins.
   }
 }
 
@@ -152,8 +152,8 @@ export function saveUserPlugin(plugin: RassamPlugin): void {
   list.push(plugin);
   try {
     localStorage.setItem("rassam-plugins", JSON.stringify(list));
-  } catch {
-    // ignore
+  } catch (error) {
+    console.warn("Rassam: plugin save failed (quota?)", error);
   }
   registerPlugin(plugin);
 }

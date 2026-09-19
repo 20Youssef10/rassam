@@ -34,14 +34,14 @@ export function buildPdfFromJpeg(
   const offsets: number[] = [];
   let length = 0;
 
-  const push = (data: Uint8Array | string) => {
-    if (typeof data === "string") {
-      const b = enc.encode(data);
+  const push = (chunk: Uint8Array | string) => {
+    if (typeof chunk === "string") {
+      const b = enc.encode(chunk);
       parts.push(b);
       length += b.length;
     } else {
-      parts.push(data);
-      length += data.length;
+      parts.push(chunk);
+      length += chunk.length;
     }
   };
 
@@ -117,6 +117,7 @@ export async function exportScenePdfFromCanvas(
   const w = canvas.clientWidth || canvas.width;
   const h = canvas.clientHeight || canvas.height;
   const pdf = buildPdfFromJpeg(jpeg, w, h);
+  // Uint8Array is a valid BlobPart at runtime; the cast bridges DOM lib versions.
   const blob = new Blob([pdf as unknown as BlobPart], { type: "application/pdf" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

@@ -16,24 +16,26 @@ services:
   room:
     build: ./collab
     ports:
-      - "3002:3002"
+      - "127.0.0.1:3002:3002"
     environment:
       - ROOM_PORT=3002
-      - CORS_ORIGIN=*
+      - CORS_ORIGIN=
     restart: unless-stopped
 
   storage:
     build: ./storage
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       - STORAGE_PORT=8080
       - STORAGE_URI=filesystem:///data
-      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - CORS_ORIGIN=
       - STORAGE_AUTH_TOKEN=${STORAGE_AUTH_TOKEN:-}
+      - STORAGE_AUTH_TOKEN_FILE=/run/secrets/storage_auth_token
       - STORAGE_REQUIRE_AUTH_READ=${STORAGE_REQUIRE_AUTH_READ:-false}
       - STORAGE_WRITE_RATE_LIMIT=${STORAGE_WRITE_RATE_LIMIT:-120}
       - STORAGE_MAX_BYTES=${STORAGE_MAX_BYTES:-8388608}
+      - TRUST_PROXY=${TRUST_PROXY:-false}
     volumes:
       - rassam-data:/data
     restart: unless-stopped
