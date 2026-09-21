@@ -299,8 +299,9 @@ function sanitizeSceneElements(elements: RassamElement[]): RassamElement[] {
       safe.link = sanitizeElementLink(safe.link);
       if (!safe.link) delete safe.link;
     }
-    if (typeof safe.text === "string" && safe.text.length > 20000) {
-      (safe as { text: string }).text = safe.text.slice(0, 20000);
+    const maybeText = (safe as { text?: unknown }).text;
+    if (typeof maybeText === "string" && maybeText.length > 20000) {
+      (safe as { text: string }).text = maybeText.slice(0, 20000);
     }
     if (Array.isArray((safe as { points?: unknown }).points)) {
       const pts = (safe as { points: { x: number; y: number }[] }).points;
