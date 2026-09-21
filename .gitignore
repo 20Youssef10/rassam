@@ -12,3 +12,4 @@ storage/data
 *.log
 .idea
 .vscode
+.mimosa/

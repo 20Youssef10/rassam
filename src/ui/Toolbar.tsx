@@ -5,7 +5,7 @@ import type { Tool } from "../core/types";
 
 const toolIcons: Record<Tool, string> = {
   select: "⬚",
-  hand: "✋",
+  hand: "✥",
   lasso: "◌",
   rectangle: "▭",
   diamond: "◇",
@@ -15,32 +15,20 @@ const toolIcons: Record<Tool, string> = {
   elbow: "⌞",
   draw: "✎",
   text: "أ",
-  image: "🖼",
-  sticky: "🗒",
+  image: "◫",
+  sticky: "▦",
   frame: "▣",
   bucket: "▨",
   laser: "◉",
   eraser: "⌫",
 };
 
-const toolOrder: Tool[] = [
-  "select",
-  "lasso",
-  "hand",
-  "rectangle",
-  "diamond",
-  "ellipse",
-  "line",
-  "arrow",
-  "elbow",
-  "draw",
-  "text",
-  "image",
-  "sticky",
-  "frame",
-  "bucket",
-  "laser",
-  "eraser",
+const toolGroups: Tool[][] = [
+  ["select", "lasso", "hand"],
+  ["rectangle", "diamond", "ellipse"],
+  ["line", "arrow", "elbow"],
+  ["draw", "text", "image", "sticky"],
+  ["frame", "bucket", "laser", "eraser"],
 ];
 
 export function Toolbar({
@@ -100,23 +88,27 @@ export function Toolbar({
       aria-orientation={typeof window !== "undefined" && window.innerWidth <= 720 ? "horizontal" : "vertical"}
       aria-label={messages.dir === "rtl" ? "أدوات الرسم" : "Drawing tools"}
     >
-      {toolOrder.map((t) => (
-        <button
-          key={t}
-          type="button"
-          className={`rassam-tool ${tool === t ? "is-active" : ""}`}
-          data-tool={t}
-          title={messages.tools[t]}
-          aria-label={messages.tools[t]}
-          aria-pressed={tool === t}
-          aria-current={tool === t ? "true" : undefined}
-          onClick={() => onToolChange(t)}
-        >
-          <span className="rassam-tool-icon" aria-hidden>
-            {toolIcons[t]}
-          </span>
-          <span className="rassam-tool-label">{messages.tools[t]}</span>
-        </button>
+      {toolGroups.map((group, gi) => (
+        <div key={gi} className="rassam-tool-group" role="group">
+          {group.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`rassam-tool ${tool === t ? "is-active" : ""}`}
+              data-tool={t}
+              title={messages.tools[t]}
+              aria-label={messages.tools[t]}
+              aria-pressed={tool === t}
+              aria-current={tool === t ? "true" : undefined}
+              onClick={() => onToolChange(t)}
+            >
+              <span className="rassam-tool-icon" aria-hidden>
+                {toolIcons[t]}
+              </span>
+              <span className="rassam-tool-label">{messages.tools[t]}</span>
+            </button>
+          ))}
+        </div>
       ))}
     </aside>
   );

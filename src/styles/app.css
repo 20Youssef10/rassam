@@ -3,9 +3,11 @@
 :root {
   --color-primary: #2563eb;
   --color-primary-hover: #1d4ed8;
+  --color-primary-ink: #1e3a8a;
   --color-teal: #0d9488;
   --color-ink: #0f172a;
   --color-sand: #f5f0e6;
+  --color-paper: #faf6ee;
   --color-muted: #64748b;
   --space-1: 4px;
   --space-2: 8px;
@@ -14,24 +16,39 @@
   --space-5: 24px;
   --space-6: 32px;
   --radius: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-pill: 999px;
   --shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+  --shadow-float: 0 12px 40px rgba(15, 23, 42, 0.14), 0 2px 8px rgba(15, 23, 42, 0.08);
+  --shadow-pop: 0 20px 60px rgba(15, 23, 42, 0.22), 0 4px 12px rgba(15, 23, 42, 0.1);
   --font-ar: "Cairo", "Noto Naskh Arabic", "Segoe UI", Tahoma, sans-serif;
+  --font-display: "Aref Ruqaa", "Reem Kufi", "Cairo", sans-serif;
   --surface: #fffcf7;
   --surface-raised: #ffffff;
+  --glass: rgba(255, 253, 248, 0.82);
   --border: rgba(15, 23, 42, 0.1);
+  --border-strong: rgba(15, 23, 42, 0.16);
   --text: #0f172a;
   --text-muted: #64748b;
   --canvas: #f5f0e6;
+  --canvas-dot: rgba(15, 23, 42, 0.1);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .theme-dark {
   --surface: #0f172a;
   --surface-raised: #1e293b;
+  --glass: rgba(15, 23, 42, 0.78);
   --border: rgba(226, 232, 240, 0.12);
+  --border-strong: rgba(226, 232, 240, 0.2);
   --text: #f8fafc;
   --text-muted: #94a3b8;
   --canvas: #1e293b;
+  --canvas-dot: rgba(248, 250, 252, 0.09);
   --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 20px 60px rgba(0, 0, 0, 0.6), 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
 * {
@@ -1008,4 +1025,326 @@ button:focus-visible {
 
 .rassam-app.theme-dark .rassam-brand-mark {
   content: url('/icon-dark.svg');
+}
+
+.rassam-app.theme-dark .rassam-brand-mark {
+  content: url('/icon-dark.svg');
+}
+
+/* ============================================================
+   Atelier redesign — paper & ink, floating glass chrome
+   Direction: warm paper canvas, ink-navy surfaces, one cobalt
+   accent, Arabic editorial type. Canvas stays the hero.
+   ============================================================ */
+
+/* Staged load: one directed entrance, then stillness */
+@keyframes rassam-rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes rassam-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes rassam-pop {
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.rassam-topbar {
+  animation: rassam-rise 0.5s var(--ease-out) both;
+}
+
+.rassam-toolbar {
+  animation: rassam-rise 0.5s var(--ease-out) 0.08s both;
+}
+
+.rassam-status {
+  animation: rassam-fade 0.6s ease 0.15s both;
+}
+
+.rassam-canvas-wrap {
+  animation: rassam-fade 0.4s ease both;
+}
+
+/* Floating header bar */
+.rassam-topbar {
+  margin: 10px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-float);
+  padding: 8px 12px;
+}
+
+.rassam-brand strong {
+  font-family: var(--font-display);
+  font-size: 19px;
+  letter-spacing: 0.01em;
+}
+
+.rassam-brand-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-ink) 100%);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.35);
+}
+
+/* Floating tool dock */
+.rassam-body {
+  padding: 10px 12px;
+  gap: 10px;
+}
+
+.rassam-toolbar {
+  width: 76px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--shadow-float);
+  padding: 8px 6px;
+  gap: 2px;
+  align-self: start;
+  max-height: 100%;
+}
+
+[dir="rtl"] .rassam-toolbar {
+  border-inline-start: 1px solid var(--border);
+}
+
+.rassam-tool-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rassam-tool-group + .rassam-tool-group {
+  border-block-start: 1px solid var(--border);
+  padding-block-start: 6px;
+  margin-block-start: 4px;
+}
+
+.rassam-tool {
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 12px;
+  min-height: 52px;
+  transition: background 160ms var(--ease-out), border-color 160ms ease,
+    color 160ms ease, transform 160ms var(--ease-out);
+}
+
+.rassam-tool:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+  border-color: transparent;
+  color: var(--color-primary);
+  transform: translateY(-1px);
+}
+
+.rassam-tool:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.rassam-tool.is-active {
+  background: var(--color-ink);
+  border-color: var(--color-ink);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.3);
+}
+
+.theme-dark .rassam-tool.is-active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.45);
+}
+
+.rassam-tool.is-active .rassam-tool-label {
+  color: inherit;
+  opacity: 0.85;
+}
+
+.rassam-tool-icon {
+  font-size: 19px;
+}
+
+/* Canvas depth: soft vignette over the sheet */
+.rassam-canvas-wrap::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: var(--radius-lg);
+  box-shadow: inset 0 0 80px rgba(15, 23, 42, 0.07);
+  z-index: 2;
+}
+
+.theme-dark .rassam-canvas-wrap::after {
+  box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.35);
+}
+
+/* Slim utility strip under the header */
+.rassam-stage-tools {
+  background: transparent;
+  border-block-end: none;
+  padding: 2px 4px 8px;
+}
+
+.rassam-stage-tools > button {
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow);
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+/* Style controls: larger swatches, clearer active ring */
+.rassam-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  transition: transform 150ms var(--ease-out), outline-color 150ms ease;
+}
+
+.rassam-swatch:hover {
+  transform: scale(1.15);
+}
+
+.rassam-swatch.is-active {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Panels and dialogs: glass cards with entrance */
+.rassam-library,
+.rassam-help-panel,
+.rassam-palette,
+.rassam-collab-panel,
+.rassam-stats,
+.rassam-layers,
+.rassam-chat,
+.rassam-history-panel {
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-pop);
+}
+
+.rassam-library,
+.rassam-help-panel,
+.rassam-palette {
+  animation: rassam-pop 0.28s var(--ease-out) both;
+}
+
+.rassam-collab-panel,
+.rassam-stats,
+.rassam-layers,
+.rassam-chat,
+.rassam-minimap-wrap {
+  animation: rassam-rise 0.25s var(--ease-out) both;
+}
+
+.rassam-library-header strong,
+.rassam-collab-panel-head strong {
+  font-family: var(--font-display);
+  font-size: 17px;
+}
+
+/* Command palette: editorial prompt */
+.rassam-palette input {
+  font-family: var(--font-display);
+  font-size: 18px;
+}
+
+/* Status bar: quieter, letterspaced */
+.rassam-status {
+  background: transparent;
+  border-block-start: none;
+  padding: 4px 16px 8px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.rassam-collab-chip {
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border-radius: var(--radius-pill);
+  padding: 2px 10px;
+}
+
+/* Toast: floating pill */
+.rassam-toast {
+  box-shadow: var(--shadow-pop);
+  font-weight: 600;
+}
+
+/* Context menu: tighter, softer */
+.rassam-context-menu {
+  border-radius: 14px;
+  box-shadow: var(--shadow-pop);
+  padding: 6px;
+}
+
+/* Subtle scrollbars inside chrome */
+.rassam-toolbar::-webkit-scrollbar,
+.rassam-library::-webkit-scrollbar,
+.rassam-palette-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.rassam-toolbar::-webkit-scrollbar-thumb,
+.rassam-library::-webkit-scrollbar-thumb,
+.rassam-palette-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--radius-pill);
+}
+
+/* First-run empty state: editorial welcome */
+.rassam-empty strong {
+  font-family: var(--font-display);
+  font-size: 34px;
+  letter-spacing: 0.01em;
+}
+
+/* Mobile: bottom dock */
+@media (max-width: 720px) {
+  .rassam-topbar {
+    margin: 8px 8px 0;
+    border-radius: var(--radius-lg);
+  }
+
+  .rassam-body {
+    padding: 8px;
+  }
+
+  .rassam-toolbar {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    border-radius: var(--radius-lg);
+    padding: 6px 8px;
+    gap: 2px;
+  }
+
+  .rassam-tool-group {
+    flex-direction: row;
+  }
+
+  .rassam-tool-group + .rassam-tool-group {
+    border-block-start: none;
+    border-inline-start: 1px solid var(--border);
+    padding-block-start: 0;
+    padding-inline-start: 6px;
+    margin-block-start: 0;
+    margin-inline-start: 4px;
+  }
+
+  .rassam-tool {
+    min-height: 52px;
+  }
 }
